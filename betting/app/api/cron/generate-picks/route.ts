@@ -52,6 +52,12 @@ const MIN_EDGE_OK = 0.012; // 1.2%
 const MIN_EV_OK = 0.025; // 0.025 units
 const MAX_FAVORITE_PRICE = -250;
 const MAX_PICKS = 5;
+const MAX_UNDERDOG_PRICE = 400;
+
+const isTooLargeUnderdog =
+  outcome.price > 0 && outcome.price > MAX_UNDERDOG_PRICE;
+
+if (isTooExpensiveFavorite || isTooLargeUnderdog) continue;
 
 function getAdminSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
