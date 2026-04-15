@@ -3,7 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 import {
   americanToImpliedProbability,
   expectedValue,
-  confidenceFromEdge,
 } from '@/lib/ev';
 
 export const dynamic = 'force-dynamic';
@@ -47,17 +46,37 @@ type CandidatePick = {
 };
 
 const MIN_EDGE_STRONG = 0.015; // 1.5%
-const MIN_EV_STRONG = 0.04; // 0.04 units
+const MIN_EV_STRONG = 0.04; // 0.04u
 const MIN_EDGE_OK = 0.012; // 1.2%
-const MIN_EV_OK = 0.025; // 0.025 units
+const MIN_EV_OK = 0.025; // 0.025u
 const MAX_FAVORITE_PRICE = -250;
-const MAX_PICKS = 5;
 const MAX_UNDERDOG_PRICE = 400;
+const MAX_PICKS = 5;
+const BANKROLL = Number(process.env.BANKROLL ?? 1000);
 
-const isTooLargeUnderdog =
-  outcome.price > 0 && outcome.price > MAX_UNDERDOG_PRICE;
+function confidenceFromEV(ev: number): number {
+  if (ev >= 0.07) return 3;
+  if (ev >= 0.04) return 2;
+  return 1;
+}
 
-if (isTooExpensiveFavorite || isTooLargeUnderdog) continue;
+function kellyStake(
+  probability: number,
+  odds: number,
+  bankroll: number
+): number {
+  const decimalOdds =
+    odds > 0 ? 1 + odds / 100 : 1 + 100 / Math.abs(odds);
+
+  const b = decimalOdds - 1;
+  const q = 1 - probability;
+  const kelly = (probability * b - q) / b;
+
+  if (kelly <= 0) return 0;
+
+  const fraction = kelly * 0.25; // quarter Kelly
+  return Number(Math.min(fraction * bankroll, bankroll * 0.05).toFixed(2));
+}
 
 function getAdminSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -186,12 +205,16 @@ export async function GET(request: NextRequest) {
           const isTooExpensiveFavorite =
             outcome.price < 0 && outcome.price < MAX_FAVORITE_PRICE;
 
+          const isTooLargeUnderdog =
+            outcome.price > 0 && outcome.price > MAX_UNDERDOG_PRICE;
+
           const passesStrong =
             edge >= MIN_EDGE_STRONG && ev >= MIN_EV_STRONG;
 
-          const passesOkay = edge >= MIN_EDGE_OK && ev >= MIN_EV_OK;
+          const passesOkay =
+            edge >= MIN_EDGE_OK && ev >= MIN_EV_OK;
 
-          if (isTooExpensiveFavorite) continue;
+          if (isTooExpensiveFavorite || isTooLargeUnderdog) continue;
           if (!passesStrong && !passesOkay) continue;
 
           const pick = `${outcome.name} ML`;
@@ -199,18 +222,26 @@ export async function GET(request: NextRequest) {
 
           if (existingSet.has(dedupeKey)) continue;
 
+          const stake = kellyStake(
+            consensusProbability,
+            outcome.price,
+            BANKROLL
+          );
+
+          if (stake <= 0) continue;
+
           candidates.push({
             sport: 'NBA',
             game,
             pick,
             odds: outcome.price,
-            confidence: confidenceFromEdge(edge),
+            confidence: confidenceFromEV(ev),
             analysis:
               `${bookmaker.title} is offering ${outcome.price} on ${outcome.name}. ` +
               `Consensus implied win probability is ${(consensusProbability * 100).toFixed(1)}% ` +
               `vs this book at ${(bookProbability * 100).toFixed(1)}%, ` +
               `for an edge of ${(edge * 100).toFixed(1)}% and EV of ${ev.toFixed(3)}u.`,
-            stake: 1,
+            stake,
             result: 'pending',
             edge,
             ev,
