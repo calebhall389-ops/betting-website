@@ -87,6 +87,8 @@ export default async function ResultsPage() {
 
   const picks = (data ?? []) as PickRow[];
 
+  const sports = Array.from(new Set(picks.map((pick) => pick.sport))).sort();
+
   const graded = picks.filter(
     (pick) =>
       pick.result === 'win' ||
@@ -232,6 +234,9 @@ export default async function ResultsPage() {
       <div className="rounded-2xl border shadow-sm overflow-hidden">
         <div className="p-4 border-b">
           <h2 className="text-xl font-semibold">Recent Picks</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Sports tracked: {sports.length > 0 ? sports.join(', ') : 'None yet'}
+          </p>
         </div>
 
         <div className="overflow-x-auto">
