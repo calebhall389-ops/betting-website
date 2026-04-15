@@ -45,13 +45,34 @@ function getResultBadge(result: string) {
   }
 }
 
-function renderConfidence(confidence: string | number) {
-  const value = Number(confidence);
-  return !Number.isNaN(value) ? `${value}/5` : String(confidence);
-}
-
 function formatStake(stake: number) {
   return `${stake}u`;
+}
+
+function getStarCount(confidence: string | number) {
+  const value = Number(confidence);
+
+  if (Number.isNaN(value)) return 1;
+
+  return Math.max(1, Math.min(5, Math.round(value)));
+}
+
+function renderStars(confidence: string | number) {
+  const stars = getStarCount(confidence);
+
+  return (
+    <div className="flex items-center gap-1">
+      {Array.from({ length: 5 }).map((_, index) => (
+        <span
+          key={index}
+          className={index < stars ? 'text-yellow-400' : 'text-slate-600'}
+        >
+          ★
+        </span>
+      ))}
+      <span className="ml-2 text-slate-300 text-sm">{stars}/5</span>
+    </div>
+  );
 }
 
 export default async function PicksPage() {
@@ -85,7 +106,6 @@ export default async function PicksPage() {
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-white">Expert Picks</h1>
         <p className="mt-2 text-sm text-slate-400">
@@ -94,7 +114,6 @@ export default async function PicksPage() {
         </p>
       </div>
 
-      {/* Picks Grid */}
       <div className="grid gap-4">
         {picks.length === 0 ? (
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-400">
@@ -106,7 +125,6 @@ export default async function PicksPage() {
               key={pick.id}
               className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-sm"
             >
-              {/* Sport and Result */}
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <span className="rounded-md bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-300">
                   {pick.sport}
@@ -121,20 +139,14 @@ export default async function PicksPage() {
                 </span>
               </div>
 
-              {/* Game and Pick */}
               <p className="text-sm text-slate-400">{pick.game}</p>
               <h2 className="mt-1 text-xl font-bold text-white">
                 {pick.pick}
               </h2>
 
-              {/* Pick Details */}
               <div className="mt-3 flex flex-wrap gap-4 text-sm">
                 <span className="font-semibold text-emerald-400">
                   {formatOdds(Number(pick.odds))}
-                </span>
-
-                <span className="text-slate-300">
-                  Confidence: {renderConfidence(pick.confidence)}
                 </span>
 
                 <span className="text-slate-300">
@@ -146,7 +158,10 @@ export default async function PicksPage() {
                 </span>
               </div>
 
-              {/* Analysis */}
+              <div className="mt-3">
+                {renderStars(pick.confidence)}
+              </div>
+
               {pick.analysis && (
                 <p className="mt-4 text-sm leading-6 text-slate-300">
                   {pick.analysis}
