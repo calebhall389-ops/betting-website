@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import ResultsCharts from './ResultsCharts';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,6 +39,28 @@ function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
 }
 
+function getResultBadge(result: string) {
+  switch (result) {
+    case 'win':
+      return 'bg-green-100 text-green-700';
+    case 'loss':
+      return 'bg-red-100 text-red-700';
+    case 'push':
+      return 'bg-gray-200 text-gray-700';
+    case 'pending':
+      return 'bg-yellow-100 text-yellow-700';
+    default:
+      return 'bg-gray-100 text-gray-600';
+  }
+}
+
+function getProfitColor(value: number | null) {
+  if (value === null) return 'text-gray-500';
+  if (value > 0) return 'text-green-600 font-semibold';
+  if (value < 0) return 'text-red-600 font-semibold';
+  return 'text-gray-600';
+}
+
 export default async function ResultsPage() {
   const supabase = getSupabase();
 
@@ -47,7 +70,7 @@ export default async function ResultsPage() {
       'id,created_at,sport,game,pick,odds,confidence,stake,result,profit'
     )
     .order('created_at', { ascending: false })
-    .limit(100);
+    .limit(250);
 
   if (error) {
     return (
@@ -86,12 +109,48 @@ export default async function ResultsPage() {
   const winRate = totalBets > 0 ? (wins / totalBets) * 100 : 0;
   const roi = totalStake > 0 ? (totalProfit / totalStake) * 100 : 0;
 
+  const dailyMap = new Map<string, number>();
+
+  for (const pick of graded) {
+    const date = new Date(pick.created_at).toLocaleDateString('en-US', {
+      month: 'numeric',
+      day: 'numeric',
+    });
+
+    dailyMap.set(date, (dailyMap.get(date) ?? 0) + Number(pick.profit ?? 0));
+  }
+
+  let runningProfit = 0;
+  const profitData = Array.from(dailyMap.entries()).map(([date, profit]) => {
+    runningProfit += profit;
+
+    return {
+      date,
+      profit: Number(profit.toFixed(2)),
+      cumulativeProfit: Number(runningProfit.toFixed(2)),
+    };
+  });
+
+  const confidenceCounts = new Map<string, number>();
+
+  for (const pick of picks) {
+    const key = String(pick.confidence ?? '1');
+    confidenceCounts.set(key, (confidenceCounts.get(key) ?? 0) + 1);
+  }
+
+  const confidenceData = Array.from(confidenceCounts.entries())
+    .sort((a, b) => Number(a[0]) - Number(b[0]))
+    .map(([confidence, bets]) => ({
+      confidence,
+      bets,
+    }));
+
   return (
     <main className="p-6 space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Results Dashboard</h1>
         <p className="text-gray-500 mt-1">
-          Track wins, losses, profit, and ROI from your automated picks.
+          Track wins, losses, profit, ROI, and performance trends.
         </p>
       </div>
 
@@ -134,10 +193,15 @@ export default async function ResultsPage() {
         </div>
 
         <div className="rounded-2xl border p-4 shadow-sm">
-          <p className="text-sm text-gray-500">Total Staked</p>
-          <p className="text-2xl font-bold">{formatMoney(totalStake)}</p>
+          <p className="text-sm text-gray-500">Pushes</p>
+          <p className="text-2xl font-bold">{pushes}</p>
         </div>
       </div>
+
+      <ResultsCharts
+        profitData={profitData}
+        confidenceData={confidenceData}
+      />
 
       <div className="rounded-2xl border shadow-sm overflow-hidden">
         <div className="p-4 border-b">
@@ -174,11 +238,23 @@ export default async function ResultsPage() {
                     <td className="p-3">{pick.sport}</td>
                     <td className="p-3">{pick.game}</td>
                     <td className="p-3">{pick.pick}</td>
-                    <td className="p-3">{pick.odds > 0 ? `+${pick.odds}` : pick.odds}</td>
-                    <td className="p-3">{formatMoney(Number(pick.stake ?? 0))}</td>
-                    <td className="p-3 capitalize">{pick.result}</td>
                     <td className="p-3">
-                      {pick.profit === null ? '-' : formatMoney(Number(pick.profit))}
+                      {pick.odds > 0 ? `+${pick.odds}` : pick.odds}
+                    </td>
+                    <td className="p-3">{formatMoney(Number(pick.stake ?? 0))}</td>
+                    <td className="p-3">
+                      <span
+                        className={`px-2 py-1 rounded-md text-xs font-semibold capitalize ${getResultBadge(
+                          pick.result
+                        )}`}
+                      >
+                        {pick.result}
+                      </span>
+                    </td>
+                    <td className={`p-3 ${getProfitColor(pick.profit)}`}>
+                      {pick.profit === null
+                        ? '-'
+                        : formatMoney(Number(pick.profit))}
                     </td>
                   </tr>
                 ))
