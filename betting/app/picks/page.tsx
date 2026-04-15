@@ -47,12 +47,7 @@ function getResultBadge(result: string) {
 
 function renderConfidence(confidence: string | number) {
   const value = Number(confidence);
-
-  if (!Number.isNaN(value)) {
-    return `${value}/5`;
-  }
-
-  return String(confidence);
+  return !Number.isNaN(value) ? `${value}/5` : String(confidence);
 }
 
 function formatStake(stake: number) {
@@ -64,32 +59,40 @@ export default async function PicksPage() {
 
   const { data, error } = await supabase
     .from('picks')
-    .select('id,created_at,sport,game,pick,odds,confidence,stake,result,analysis')
+    .select(
+      'id,created_at,sport,game,pick,odds,confidence,stake,result,analysis'
+    )
     .order('created_at', { ascending: false })
     .limit(100);
 
   if (error) {
     return (
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <h1 className="text-2xl font-bold text-white">Picks</h1>
-        <p className="mt-3 text-red-400">Error loading picks: {error.message}</p>
+      <main className="mx-auto max-w-7xl px-4 py-8 text-white">
+        <h1 className="text-2xl font-bold">Picks</h1>
+        <p className="mt-3 text-red-400">
+          Error loading picks: {error.message}
+        </p>
       </main>
     );
   }
 
   const picks = (data ?? []) as PickRow[];
 
-  const wins = picks.filter((pick) => pick.result === 'win').length;
-  const losses = picks.filter((pick) => pick.result === 'loss').length;
+  const wins = picks.filter((p) => p.result === 'win').length;
+  const losses = picks.filter((p) => p.result === 'loss').length;
   const graded = wins + losses;
   const winRate = graded > 0 ? ((wins / graded) * 100).toFixed(1) : '0.0';
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-white">PICKS PAGE TEST 123</h1>
+        {/* Deployment Test Heading */}
+        <h1 className="text-3xl font-bold text-white">
+          PICKS PAGE TEST 123
+        </h1>
         <p className="mt-2 text-sm text-slate-400">
-          {wins} W - {losses} L · {winRate}% Win Rate · Live picks from your database
+          {wins} W - {losses} L · {winRate}% Win Rate · Live picks from your
+          database
         </p>
       </div>
 
@@ -108,7 +111,6 @@ export default async function PicksPage() {
                 <span className="rounded-md bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-300">
                   {pick.sport}
                 </span>
-
                 <span
                   className={`rounded-md px-2 py-1 text-xs font-semibold capitalize ${getResultBadge(
                     pick.result
@@ -119,31 +121,30 @@ export default async function PicksPage() {
               </div>
 
               <p className="text-sm text-slate-400">{pick.game}</p>
-              <h2 className="mt-1 text-xl font-bold text-white">{pick.pick}</h2>
+              <h2 className="mt-1 text-xl font-bold text-white">
+                {pick.pick}
+              </h2>
 
               <div className="mt-3 flex flex-wrap gap-4 text-sm">
                 <span className="font-semibold text-emerald-400">
                   {formatOdds(Number(pick.odds))}
                 </span>
-
                 <span className="text-slate-300">
                   Confidence: {renderConfidence(pick.confidence)}
                 </span>
-
                 <span className="text-slate-300">
                   Stake: {formatStake(Number(pick.stake))}
                 </span>
-
                 <span className="text-slate-500">
                   {new Date(pick.created_at).toLocaleDateString()}
                 </span>
               </div>
 
-              {pick.analysis ? (
+              {pick.analysis && (
                 <p className="mt-4 text-sm leading-6 text-slate-300">
                   {pick.analysis}
                 </p>
-              ) : null}
+              )}
             </div>
           ))
         )}
