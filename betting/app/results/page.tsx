@@ -1,10 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 import ResultsCharts from './ResultsCharts';
 
+export const dynamic = 'force-dynamic';
+
 const STARTING_BANKROLL = Number(
   process.env.NEXT_PUBLIC_BANKROLL ?? 1000
 );
-export const dynamic = 'force-dynamic';
 
 type PickRow = {
   id: string;
@@ -111,6 +112,7 @@ export default async function ResultsPage() {
   const totalBets = graded.length;
   const winRate = totalBets > 0 ? (wins / totalBets) * 100 : 0;
   const roi = totalStake > 0 ? (totalProfit / totalStake) * 100 : 0;
+  const currentBankroll = STARTING_BANKROLL + totalProfit;
 
   const dailyMap = new Map<string, number>();
 
@@ -123,29 +125,27 @@ export default async function ResultsPage() {
     dailyMap.set(date, (dailyMap.get(date) ?? 0) + Number(pick.profit ?? 0));
   }
 
-  const STARTING_BANKROLL = Number(process.env.NEXT_PUBLIC_BANKROLL ?? 1000);
+  let runningBankroll = STARTING_BANKROLL;
 
-let runningBankroll = STARTING_BANKROLL;
+  const bankrollData = Array.from(dailyMap.entries())
+    .sort(([a], [b]) => {
+      const [aMonth, aDay] = a.split('/').map(Number);
+      const [bMonth, bDay] = b.split('/').map(Number);
 
-const bankrollData = Array.from(dailyMap.entries())
-  .sort(([a], [b]) => {
-    const [aMonth, aDay] = a.split('/').map(Number);
-    const [bMonth, bDay] = b.split('/').map(Number);
+      return (
+        new Date(2026, aMonth - 1, aDay).getTime() -
+        new Date(2026, bMonth - 1, bDay).getTime()
+      );
+    })
+    .map(([date, profit]) => {
+      runningBankroll += profit;
 
-    return (
-      new Date(2026, aMonth - 1, aDay).getTime() -
-      new Date(2026, bMonth - 1, bDay).getTime()
-    );
-  })
-  .map(([date, profit]) => {
-    runningBankroll += profit;
-
-    return {
-      date,
-      profit: Number(profit.toFixed(2)),
-      bankroll: Number(runningBankroll.toFixed(2)),
-    };
-  });
+      return {
+        date,
+        profit: Number(profit.toFixed(2)),
+        bankroll: Number(runningBankroll.toFixed(2)),
+      };
+    });
 
   const confidenceCounts = new Map<string, number>();
 
@@ -170,7 +170,7 @@ const bankrollData = Array.from(dailyMap.entries())
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-8">
         <div className="rounded-2xl border p-4 shadow-sm">
           <p className="text-sm text-gray-500">Graded Bets</p>
           <p className="text-2xl font-bold">{totalBets}</p>
@@ -200,6 +200,16 @@ const bankrollData = Array.from(dailyMap.entries())
           <p className="text-sm text-gray-500">ROI</p>
           <p className="text-2xl font-bold">{formatPercent(roi)}</p>
         </div>
+
+        <div className="rounded-2xl border p-4 shadow-sm">
+          <p className="text-sm text-gray-500">Starting Bankroll</p>
+          <p className="text-2xl font-bold">{formatMoney(STARTING_BANKROLL)}</p>
+        </div>
+
+        <div className="rounded-2xl border p-4 shadow-sm">
+          <p className="text-sm text-gray-500">Current Bankroll</p>
+          <p className="text-2xl font-bold">{formatMoney(currentBankroll)}</p>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -215,7 +225,7 @@ const bankrollData = Array.from(dailyMap.entries())
       </div>
 
       <ResultsCharts
-        profitData={profitData}
+        profitData={bankrollData}
         confidenceData={confidenceData}
       />
 
@@ -257,7 +267,9 @@ const bankrollData = Array.from(dailyMap.entries())
                     <td className="p-3">
                       {pick.odds > 0 ? `+${pick.odds}` : pick.odds}
                     </td>
-                    <td className="p-3">{formatMoney(Number(pick.stake ?? 0))}</td>
+                    <td className="p-3">
+                      {formatMoney(Number(pick.stake ?? 0))}
+                    </td>
                     <td className="p-3">
                       <span
                         className={`px-2 py-1 rounded-md text-xs font-semibold capitalize ${getResultBadge(
