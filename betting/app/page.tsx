@@ -1,115 +1,210 @@
 import Link from 'next/link';
-import { TrendingUp, Target, BarChart2, ListChecks, ArrowRight, Trophy } from 'lucide-react';
-import PickCard from '@/components/pick-card';
-import { mockPicks } from '@/lib/mock-data';
-import { computeStats } from '@/lib/utils';
+import { createClient } from '@supabase/supabase-js';
 
-export default function HomePage() {
-  const stats = computeStats(mockPicks);
-  const featuredPicks = mockPicks.slice(0, 3);
+export const dynamic = 'force-dynamic';
 
-  const statCards = [
-    { label: 'Win Rate', value: `${stats.winRate.toFixed(1)}%`, sub: `${stats.wins}W - ${stats.losses}L`, color: 'text-emerald-400' },
-    { label: 'Total Profit', value: `${stats.totalProfit > 0 ? '+' : ''}${stats.totalProfit.toFixed(1)}u`, sub: 'All-time units', color: stats.totalProfit >= 0 ? 'text-emerald-400' : 'text-red-400' },
-    { label: 'ROI', value: `${stats.roi > 0 ? '+' : ''}${stats.roi.toFixed(1)}%`, sub: 'Return on investment', color: stats.roi >= 0 ? 'text-emerald-400' : 'text-red-400' },
-    { label: 'Total Picks', value: stats.totalPicks.toString(), sub: `${stats.pending} pending`, color: 'text-white' },
-  ];
+type PickRow = {
+  id: string;
+  created_at: string;
+  sport: string;
+  game: string;
+  pick: string;
+  odds: number;
+  confidence: string | number;
+  stake: number;
+  result: string;
+  profit: number | null;
+};
+
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anon) {
+    throw new Error('Missing Supabase public environment variables');
+  }
+
+  return createClient(url, anon);
+}
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function formatPercent(value: number) {
+  return `${value.toFixed(1)}%`;
+}
+
+export default async function HomePage() {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from('picks')
+    .select(
+      'id,created_at,sport,game,pick,odds,confidence,stake,result,profit'
+    )
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (error) {
+    return (
+      <main className="p-6">
+        <h1 className="text-3xl font-bold mb-4">Betting Dashboard</h1>
+        <p className="text-red-600">Error loading picks: {error.message}</p>
+      </main>
+    );
+  }
+
+  const picks = (data ?? []) as PickRow[];
+
+  const graded = picks.filter(
+    (pick) =>
+      pick.result === 'win' ||
+      pick.result === 'loss' ||
+      pick.result === 'push'
+  );
+
+  const wins = graded.filter((pick) => pick.result === 'win').length;
+  const losses = graded.filter((pick) => pick.result === 'loss').length;
+  const pushes = graded.filter((pick) => pick.result === 'push').length;
+  const pending = picks.filter((pick) => pick.result === 'pending').length;
+
+  const totalStake = graded.reduce(
+    (sum, pick) => sum + Number(pick.stake ?? 0),
+    0
+  );
+
+  const totalProfit = graded.reduce(
+    (sum, pick) => sum + Number(pick.profit ?? 0),
+    0
+  );
+
+  const totalBets = graded.length;
+  const winRate = totalBets > 0 ? (wins / totalBets) * 100 : 0;
+  const roi = totalStake > 0 ? (totalProfit / totalStake) * 100 : 0;
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      <section className="relative overflow-hidden border-b border-slate-800">
-        <div className="absolute inset-0 bg-gradient-to-br from-emerald-950/30 via-slate-950 to-slate-950" />
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 md:py-28">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-400 font-medium mb-6">
-              <Trophy size={12} />
-              Professional Sports Analysis
-            </div>
-            <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight leading-none mb-5">
-              Bet Smarter,<br />
-              <span className="text-emerald-400">Win More.</span>
-            </h1>
-            <p className="text-lg text-slate-400 leading-relaxed mb-8 max-w-xl">
-              Expert picks, sharp player props, real-time odds, and comprehensive bet tracking — all in one place.
-            </p>
-            <div className="flex flex-wrap gap-3">
-              <Link
-                href="/picks"
-                className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-400 transition-colors shadow-lg shadow-emerald-500/25"
-              >
-                View Today&apos;s Picks
-                <ArrowRight size={16} />
-              </Link>
-              <Link
-                href="/odds"
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 transition-colors"
-              >
-                Live Odds
-              </Link>
-            </div>
-          </div>
+    <main className="p-6 space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold">Betting Dashboard</h1>
+          <p className="text-gray-500 mt-1">
+            Automated picks, results, profit, and ROI.
+          </p>
         </div>
-      </section>
 
-      <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {statCards.map(({ label, value, sub, color }) => (
-            <div key={label} className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-              <p className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-2">{label}</p>
-              <p className={`text-2xl md:text-3xl font-black ${color}`}>{value}</p>
-              <p className="text-xs text-slate-600 mt-1">{sub}</p>
-            </div>
-          ))}
+        <Link
+          href="/results"
+          className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-gray-50"
+        >
+          View Full Results
+        </Link>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+        <div className="rounded-2xl border p-4 shadow-sm">
+          <p className="text-sm text-gray-500">Graded Bets</p>
+          <p className="text-2xl font-bold">{totalBets}</p>
         </div>
-      </section>
 
-      <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pb-12">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h2 className="text-xl font-bold text-white">Recent Picks</h2>
-            <p className="text-sm text-slate-500 mt-0.5">Latest expert analysis</p>
-          </div>
+        <div className="rounded-2xl border p-4 shadow-sm">
+          <p className="text-sm text-gray-500">Wins</p>
+          <p className="text-2xl font-bold">{wins}</p>
+        </div>
+
+        <div className="rounded-2xl border p-4 shadow-sm">
+          <p className="text-sm text-gray-500">Losses</p>
+          <p className="text-2xl font-bold">{losses}</p>
+        </div>
+
+        <div className="rounded-2xl border p-4 shadow-sm">
+          <p className="text-sm text-gray-500">Pushes</p>
+          <p className="text-2xl font-bold">{pushes}</p>
+        </div>
+
+        <div className="rounded-2xl border p-4 shadow-sm">
+          <p className="text-sm text-gray-500">Pending</p>
+          <p className="text-2xl font-bold">{pending}</p>
+        </div>
+
+        <div className="rounded-2xl border p-4 shadow-sm">
+          <p className="text-sm text-gray-500">Profit</p>
+          <p className="text-2xl font-bold">{formatMoney(totalProfit)}</p>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="rounded-2xl border p-4 shadow-sm">
+          <p className="text-sm text-gray-500">Win Rate</p>
+          <p className="text-2xl font-bold">{formatPercent(winRate)}</p>
+        </div>
+
+        <div className="rounded-2xl border p-4 shadow-sm">
+          <p className="text-sm text-gray-500">ROI</p>
+          <p className="text-2xl font-bold">{formatPercent(roi)}</p>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border shadow-sm overflow-hidden">
+        <div className="p-4 border-b flex items-center justify-between">
+          <h2 className="text-xl font-semibold">Latest Picks</h2>
           <Link
-            href="/picks"
-            className="inline-flex items-center gap-1.5 text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
+            href="/results"
+            className="text-sm font-medium text-blue-600 hover:underline"
           >
-            View all <ArrowRight size={14} />
+            See all
           </Link>
         </div>
-        <div className="grid md:grid-cols-3 gap-4">
-          {featuredPicks.map((pick) => (
-            <PickCard key={pick.id} pick={pick} />
-          ))}
-        </div>
-      </section>
 
-      <section className="border-t border-slate-800 bg-slate-900/50">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12">
-          <h2 className="text-xl font-bold text-white mb-8 text-center">Everything You Need</h2>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              { icon: Target, title: 'Expert Picks', desc: 'Curated picks with detailed analysis and confidence ratings across all major sports.', href: '/picks' },
-              { icon: TrendingUp, title: 'Player Props', desc: 'Daily player prop recommendations with over/under lines and sharp angles.', href: '/props' },
-              { icon: BarChart2, title: 'Live Odds', desc: 'Up-to-date spreads, moneylines, and totals across NFL, NBA, MLB, NHL and more.', href: '/odds' },
-              { icon: ListChecks, title: 'Bet Tracker', desc: 'Track every wager, monitor your ROI, and analyze your betting performance.', href: '/tracker' },
-            ].map(({ icon: Icon, title, desc, href }) => (
-              <Link
-                key={href}
-                href={href}
-                className="group rounded-xl border border-slate-800 bg-slate-900 p-6 hover:border-emerald-500/30 hover:bg-slate-800/50 transition-all duration-200"
-              >
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10 border border-emerald-500/20 mb-4 group-hover:bg-emerald-500/20 transition-colors">
-                  <Icon size={18} className="text-emerald-400" />
-                </div>
-                <h3 className="text-sm font-bold text-white mb-2">{title}</h3>
-                <p className="text-xs text-slate-500 leading-relaxed">{desc}</p>
-              </Link>
-            ))}
-          </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr className="text-left">
+                <th className="p-3">Date</th>
+                <th className="p-3">Game</th>
+                <th className="p-3">Pick</th>
+                <th className="p-3">Odds</th>
+                <th className="p-3">Stake</th>
+                <th className="p-3">Result</th>
+                <th className="p-3">Profit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {picks.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-4 text-center text-gray-500">
+                    No picks found yet.
+                  </td>
+                </tr>
+              ) : (
+                picks.map((pick) => (
+                  <tr key={pick.id} className="border-t">
+                    <td className="p-3">
+                      {new Date(pick.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="p-3">{pick.game}</td>
+                    <td className="p-3">{pick.pick}</td>
+                    <td className="p-3">
+                      {pick.odds > 0 ? `+${pick.odds}` : pick.odds}
+                    </td>
+                    <td className="p-3">
+                      {formatMoney(Number(pick.stake ?? 0))}
+                    </td>
+                    <td className="p-3 capitalize">{pick.result}</td>
+                    <td className="p-3">
+                      {pick.profit === null ? '-' : formatMoney(Number(pick.profit))}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
-      </section>
-    </div>
+      </div>
+    </main>
   );
 }
