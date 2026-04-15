@@ -64,7 +64,7 @@ const MIN_EDGE_OK = 0.012;
 const MIN_EV_OK = 0.025;
 const MAX_FAVORITE_PRICE = -250;
 const MAX_UNDERDOG_PRICE = 400;
-const MAX_PICKS = 5;
+const MAX_PICKS = 25;
 const BANKROLL = Number(process.env.BANKROLL ?? 1000);
 
 function confidenceFromEV(ev: number): number {
