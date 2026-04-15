@@ -31,12 +31,45 @@ function formatMoney(value: number) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
-    maximumFractionDigits: 2,
   }).format(value);
 }
 
 function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
+}
+
+function getResultBadge(result: string) {
+  switch (result) {
+    case 'win':
+      return 'bg-green-100 text-green-700';
+    case 'loss':
+      return 'bg-red-100 text-red-700';
+    case 'push':
+      return 'bg-gray-200 text-gray-700';
+    case 'pending':
+      return 'bg-yellow-100 text-yellow-700';
+    default:
+      return 'bg-gray-100 text-gray-600';
+  }
+}
+
+function getConfidenceBadge(confidence: string | number) {
+  const level = Number(confidence);
+  switch (level) {
+    case 3:
+      return 'bg-green-100 text-green-700';
+    case 2:
+      return 'bg-blue-100 text-blue-700';
+    default:
+      return 'bg-gray-200 text-gray-700';
+  }
+}
+
+function getProfitColor(value: number | null) {
+  if (value === null) return 'text-gray-500';
+  if (value > 0) return 'text-green-600 font-semibold';
+  if (value < 0) return 'text-red-600 font-semibold';
+  return 'text-gray-600';
 }
 
 export default async function HomePage() {
@@ -61,18 +94,13 @@ export default async function HomePage() {
 
   const picks = (data ?? []) as PickRow[];
 
-  const today = new Date();
-  const todayString = today.toISOString().slice(0, 10);
-
+  const today = new Date().toISOString().slice(0, 10);
   const todaysPicks = picks.filter(
-    (pick) => pick.created_at.slice(0, 10) === todayString
+    (pick) => pick.created_at.slice(0, 10) === today
   );
 
-  const graded = picks.filter(
-    (pick) =>
-      pick.result === 'win' ||
-      pick.result === 'loss' ||
-      pick.result === 'push'
+  const graded = picks.filter((pick) =>
+    ['win', 'loss', 'push'].includes(pick.result)
   );
 
   const recentResults = graded.slice(0, 15);
@@ -98,10 +126,11 @@ export default async function HomePage() {
 
   return (
     <main className="p-6 space-y-6">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap">
         <div>
           <h1 className="text-3xl font-bold">Betting Dashboard</h1>
-          <p className="text-gray-500 mt-1">
+          <p className="text-gray-500">
             Today’s picks, tracked results, profit, and ROI.
           </p>
         </div>
@@ -114,162 +143,145 @@ export default async function HomePage() {
         </Link>
       </div>
 
-      <div className="rounded-2xl border shadow-sm overflow-hidden">
-        <div className="p-4 border-b flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold">Today&apos;s Picks</h2>
-            <p className="text-sm text-gray-500 mt-1">
-              Latest automated picks generated today.
-            </p>
-          </div>
+      {/* Today's Picks */}
+      <section className="rounded-2xl border shadow-sm overflow-hidden">
+        <div className="p-4 border-b">
+          <h2 className="text-xl font-semibold">Today's Picks</h2>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
-              <tr className="text-left">
-                <th className="p-3">Time</th>
-                <th className="p-3">Sport</th>
-                <th className="p-3">Game</th>
-                <th className="p-3">Pick</th>
-                <th className="p-3">Odds</th>
-                <th className="p-3">Confidence</th>
-                <th className="p-3">Stake</th>
-                <th className="p-3">Result</th>
+              <tr>
+                <th className="p-3 text-left">Game</th>
+                <th className="p-3 text-left">Pick</th>
+                <th className="p-3 text-left">Odds</th>
+                <th className="p-3 text-left">Confidence</th>
+                <th className="p-3 text-left">Stake</th>
+                <th className="p-3 text-left">Result</th>
               </tr>
             </thead>
             <tbody>
               {todaysPicks.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-4 text-center text-gray-500">
-                    No picks generated today yet.
+                  <td colSpan={6} className="p-4 text-center text-gray-500">
+                    No picks generated today.
                   </td>
                 </tr>
               ) : (
                 todaysPicks.map((pick) => (
                   <tr key={pick.id} className="border-t">
-                    <td className="p-3">
-                      {new Date(pick.created_at).toLocaleTimeString([], {
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
-                    </td>
-                    <td className="p-3">{pick.sport}</td>
                     <td className="p-3">{pick.game}</td>
                     <td className="p-3">{pick.pick}</td>
                     <td className="p-3">
                       {pick.odds > 0 ? `+${pick.odds}` : pick.odds}
                     </td>
-                    <td className="p-3">{pick.confidence}</td>
                     <td className="p-3">
-                      {formatMoney(Number(pick.stake ?? 0))}
+                      <span
+                        className={`px-2 py-1 rounded-md text-xs font-semibold ${getConfidenceBadge(
+                          pick.confidence
+                        )}`}
+                      >
+                        {pick.confidence}
+                      </span>
                     </td>
-                    <td className="p-3 capitalize">{pick.result}</td>
+                    <td className="p-3">
+                      {formatMoney(Number(pick.stake))}
+                    </td>
+                    <td className="p-3">
+                      <span
+                        className={`px-2 py-1 rounded-md text-xs font-semibold capitalize ${getResultBadge(
+                          pick.result
+                        )}`}
+                      >
+                        {pick.result}
+                      </span>
+                    </td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
 
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-        <div className="rounded-2xl border p-4 shadow-sm">
-          <p className="text-sm text-gray-500">Graded Bets</p>
-          <p className="text-2xl font-bold">{totalBets}</p>
-        </div>
+      {/* Performance Metrics */}
+      <section className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+        {[
+          { label: 'Graded Bets', value: totalBets },
+          { label: 'Wins', value: wins },
+          { label: 'Losses', value: losses },
+          { label: 'Pushes', value: pushes },
+          { label: 'Pending', value: pending },
+          { label: 'Profit', value: formatMoney(totalProfit) },
+        ].map((stat) => (
+          <div key={stat.label} className="rounded-2xl border p-4 shadow-sm">
+            <p className="text-sm text-gray-500">{stat.label}</p>
+            <p className="text-2xl font-bold">{stat.value}</p>
+          </div>
+        ))}
+      </section>
 
-        <div className="rounded-2xl border p-4 shadow-sm">
-          <p className="text-sm text-gray-500">Wins</p>
-          <p className="text-2xl font-bold">{wins}</p>
-        </div>
-
-        <div className="rounded-2xl border p-4 shadow-sm">
-          <p className="text-sm text-gray-500">Losses</p>
-          <p className="text-2xl font-bold">{losses}</p>
-        </div>
-
-        <div className="rounded-2xl border p-4 shadow-sm">
-          <p className="text-sm text-gray-500">Pushes</p>
-          <p className="text-2xl font-bold">{pushes}</p>
-        </div>
-
-        <div className="rounded-2xl border p-4 shadow-sm">
-          <p className="text-sm text-gray-500">Pending</p>
-          <p className="text-2xl font-bold">{pending}</p>
-        </div>
-
-        <div className="rounded-2xl border p-4 shadow-sm">
-          <p className="text-sm text-gray-500">Profit</p>
-          <p className="text-2xl font-bold">{formatMoney(totalProfit)}</p>
-        </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
+      {/* ROI and Win Rate */}
+      <section className="grid gap-4 md:grid-cols-2">
         <div className="rounded-2xl border p-4 shadow-sm">
           <p className="text-sm text-gray-500">Win Rate</p>
-          <p className="text-2xl font-bold">{formatPercent(winRate)}</p>
+          <p className="text-2xl font-bold">
+            {formatPercent(winRate)}
+          </p>
         </div>
-
         <div className="rounded-2xl border p-4 shadow-sm">
           <p className="text-sm text-gray-500">ROI</p>
-          <p className="text-2xl font-bold">{formatPercent(roi)}</p>
+          <p className="text-2xl font-bold">
+            {formatPercent(roi)}
+          </p>
         </div>
-      </div>
+      </section>
 
-      <div className="rounded-2xl border shadow-sm overflow-hidden">
-        <div className="p-4 border-b flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold">Recent Results</h2>
-            <p className="text-sm text-gray-500 mt-1">
-              Most recently graded picks.
-            </p>
-          </div>
-
+      {/* Recent Results */}
+      <section className="rounded-2xl border shadow-sm overflow-hidden">
+        <div className="p-4 border-b flex justify-between items-center">
+          <h2 className="text-xl font-semibold">Recent Results</h2>
           <Link
             href="/results"
-            className="text-sm font-medium text-blue-600 hover:underline"
+            className="text-sm text-blue-600 hover:underline"
           >
-            See all
+            See All
           </Link>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
-              <tr className="text-left">
-                <th className="p-3">Date</th>
-                <th className="p-3">Game</th>
-                <th className="p-3">Pick</th>
-                <th className="p-3">Odds</th>
-                <th className="p-3">Stake</th>
-                <th className="p-3">Result</th>
-                <th className="p-3">Profit</th>
+              <tr>
+                <th className="p-3 text-left">Game</th>
+                <th className="p-3 text-left">Pick</th>
+                <th className="p-3 text-left">Result</th>
+                <th className="p-3 text-left">Profit</th>
               </tr>
             </thead>
             <tbody>
               {recentResults.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-4 text-center text-gray-500">
+                  <td colSpan={4} className="p-4 text-center text-gray-500">
                     No graded results yet.
                   </td>
                 </tr>
               ) : (
                 recentResults.map((pick) => (
                   <tr key={pick.id} className="border-t">
-                    <td className="p-3">
-                      {new Date(pick.created_at).toLocaleDateString()}
-                    </td>
                     <td className="p-3">{pick.game}</td>
                     <td className="p-3">{pick.pick}</td>
                     <td className="p-3">
-                      {pick.odds > 0 ? `+${pick.odds}` : pick.odds}
+                      <span
+                        className={`px-2 py-1 rounded-md text-xs font-semibold capitalize ${getResultBadge(
+                          pick.result
+                        )}`}
+                      >
+                        {pick.result}
+                      </span>
                     </td>
-                    <td className="p-3">
-                      {formatMoney(Number(pick.stake ?? 0))}
-                    </td>
-                    <td className="p-3 capitalize">{pick.result}</td>
-                    <td className="p-3">
+                    <td className={`p-3 ${getProfitColor(pick.profit)}`}>
                       {pick.profit === null
                         ? '-'
                         : formatMoney(Number(pick.profit))}
@@ -280,7 +292,7 @@ export default async function HomePage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
     </main>
   );
 }
