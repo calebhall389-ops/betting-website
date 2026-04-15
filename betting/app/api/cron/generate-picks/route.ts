@@ -33,6 +33,24 @@ type OddsEvent = {
   bookmakers: Bookmaker[];
 };
 
+type CandidatePick = {
+  sport: string;
+  game: string;
+  pick: string;
+  odds: number;
+  confidence: number;
+  analysis: string;
+  stake: number;
+  result: string;
+  edge: number;
+  ev: number;
+};
+
+const MIN_EDGE = 0.015; // 1.5%
+const MIN_EV = 0.04; // 0.04 units
+const MAX_FAVORITE_PRICE = -250; // reject favorites more expensive than -250
+const MAX_PICKS = 5;
+
 function getAdminSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const secret =
@@ -106,17 +124,7 @@ export async function GET(request: NextRequest) {
       (existingRows ?? []).map((row) => `${row.game}__${row.pick}`)
     );
 
-    const candidates: Array<{
-      sport: string;
-      game: string;
-      pick: string;
-      odds: number;
-      confidence: number;
-      analysis: string;
-      stake: number;
-      result: string;
-      edge: number;
-    }> = [];
+    const candidates: CandidatePick[] = [];
 
     for (const event of events) {
       const game = `${event.away_team} at ${event.home_team}`;
@@ -153,7 +161,12 @@ export async function GET(request: NextRequest) {
           const edge = consensusProbability - bookProbability;
           const ev = expectedValue(consensusProbability, outcome.price, 1);
 
-          if (edge < 0.01 || ev < 0.005) continue;
+          const isTooExpensiveFavorite =
+            outcome.price < 0 && outcome.price < MAX_FAVORITE_PRICE;
+
+          if (edge < MIN_EDGE) continue;
+          if (ev < MIN_EV) continue;
+          if (isTooExpensiveFavorite) continue;
 
           const pick = `${outcome.name} ML`;
           const dedupeKey = `${game}__${pick}`;
@@ -174,24 +187,39 @@ export async function GET(request: NextRequest) {
             stake: 1,
             result: 'pending',
             edge,
+            ev,
           });
         }
       }
     }
 
-    const bestByGame = new Map<string, (typeof candidates)[number]>();
+    const bestByGame = new Map<string, CandidatePick>();
 
     for (const candidate of candidates) {
       const current = bestByGame.get(candidate.game);
-      if (!current || candidate.edge > current.edge) {
+
+      if (!current) {
+        bestByGame.set(candidate.game, candidate);
+        continue;
+      }
+
+      if (candidate.ev > current.ev) {
+        bestByGame.set(candidate.game, candidate);
+        continue;
+      }
+
+      if (candidate.ev === current.ev && candidate.edge > current.edge) {
         bestByGame.set(candidate.game, candidate);
       }
     }
 
     const finalPicks = Array.from(bestByGame.values())
-      .sort((a, b) => b.edge - a.edge)
-      .slice(0, 5)
-      .map(({ edge, ...row }) => row);
+      .sort((a, b) => {
+        if (b.ev !== a.ev) return b.ev - a.ev;
+        return b.edge - a.edge;
+      })
+      .slice(0, MAX_PICKS)
+      .map(({ edge, ev, ...row }) => row);
 
     if (finalPicks.length === 0) {
       return NextResponse.json({
