@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  ResponsiveContainer,
   LineChart,
   Line,
   BarChart,
@@ -10,86 +9,75 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  ResponsiveContainer,
+  Legend,
 } from 'recharts';
 
-type ChartRow = {
+type ProfitData = {
   date: string;
   profit: number;
   cumulativeProfit: number;
 };
 
-type ConfidenceRow = {
+type ConfidenceData = {
   confidence: string;
   bets: number;
 };
 
 type Props = {
-  profitData: ChartRow[];
-  confidenceData: ConfidenceRow[];
+  profitData: ProfitData[];
+  confidenceData: ConfidenceData[];
 };
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 2,
-  }).format(value);
-}
 
 export default function ResultsCharts({
   profitData,
   confidenceData,
 }: Props) {
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="space-y-6">
+      {/* Cumulative Profit Chart */}
       <div className="rounded-2xl border p-4 shadow-sm">
-        <h3 className="text-lg font-semibold mb-4">Cumulative Profit</h3>
-        <div className="h-80">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={profitData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis tickFormatter={(value) => `$${value}`} />
-              <Tooltip formatter={(value: number) => formatMoney(value)} />
-              <Line
-                type="monotone"
-                dataKey="cumulativeProfit"
-                strokeWidth={3}
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+        <h2 className="text-xl font-semibold mb-4">
+          Cumulative Profit
+        </h2>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={profitData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="date" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Line
+              type="monotone"
+              dataKey="cumulativeProfit"
+              stroke="#16a34a"
+              strokeWidth={3}
+              name="Profit ($)"
+            />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
 
+      {/* Confidence Distribution Chart */}
       <div className="rounded-2xl border p-4 shadow-sm">
-        <h3 className="text-lg font-semibold mb-4">Profit by Day</h3>
-        <div className="h-80">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={profitData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis tickFormatter={(value) => `$${value}`} />
-              <Tooltip formatter={(value: number) => formatMoney(value)} />
-              <Bar dataKey="profit" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border p-4 shadow-sm lg:col-span-2">
-        <h3 className="text-lg font-semibold mb-4">Bets by Confidence</h3>
-        <div className="h-72">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={confidenceData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="confidence" />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Bar dataKey="bets" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        <h2 className="text-xl font-semibold mb-4">
+          Bets by Confidence Level
+        </h2>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={confidenceData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="confidence" />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Bar
+              dataKey="bets"
+              fill="#2563eb"
+              name="Number of Bets"
+              radius={[6, 6, 0, 0]}
+            />
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
