@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import OddsTable from '@/components/odds-table';
+import { SPORT_NAME_MAP } from '@/lib/odds-api';
 import { cn } from '@/lib/utils';
 import { Filter } from 'lucide-react';
 
@@ -10,6 +11,7 @@ type ApiSport = {
   group: string;
   title: string;
   active: boolean;
+  has_outrights?: boolean;
 };
 
 type OddsPageRow = {
@@ -44,8 +46,12 @@ export default function OddsPage() {
           throw new Error(json.error || 'Failed to load sports');
         }
 
-        const loadedSports = (json.sports as ApiSport[]) ?? [];
+        const loadedSports = Array.isArray(json.sports) ? json.sports : [];
         setSports(loadedSports);
+
+        if (loadedSports.length === 0) {
+          setSelectedSport('All');
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load sports');
       } finally {
@@ -63,7 +69,7 @@ export default function OddsPage() {
         setError(null);
 
         if (selectedSport === 'All') {
-          const activeSports = sports.filter((sport) => sport.active).slice(0, 12);
+          const activeSports = sports.length > 0 ? sports : [];
 
           const results = await Promise.all(
             activeSports.map(async (sport) => {
@@ -71,13 +77,17 @@ export default function OddsPage() {
                 `/api/odds?sport=${encodeURIComponent(sport.key)}`,
                 { cache: 'no-store' }
               );
+
               const json = await res.json();
 
               if (!res.ok || !json.success) {
                 return [];
               }
 
-              return normalizeOdds(json.data, sport.title);
+              return normalizeOdds(
+                json.data,
+                SPORT_NAME_MAP[sport.key] || sport.title
+              );
             })
           );
 
@@ -89,6 +99,7 @@ export default function OddsPage() {
           `/api/odds?sport=${encodeURIComponent(selectedSport)}`,
           { cache: 'no-store' }
         );
+
         const json = await res.json();
 
         if (!res.ok || !json.success) {
@@ -96,7 +107,9 @@ export default function OddsPage() {
         }
 
         const sportTitle =
-          sports.find((s) => s.key === selectedSport)?.title ?? selectedSport;
+          SPORT_NAME_MAP[selectedSport] ||
+          sports.find((s) => s.key === selectedSport)?.title ||
+          selectedSport;
 
         setOdds(normalizeOdds(json.data, sportTitle));
       } catch (err) {
@@ -110,6 +123,10 @@ export default function OddsPage() {
     if (!sportsLoading && sports.length > 0) {
       loadOdds();
     }
+
+    if (!sportsLoading && sports.length === 0) {
+      setOdds([]);
+    }
   }, [selectedSport, sports, sportsLoading]);
 
   const sportButtons = useMemo(
@@ -117,7 +134,7 @@ export default function OddsPage() {
       { key: 'All', title: 'All' },
       ...sports.map((sport) => ({
         key: sport.key,
-        title: sport.title,
+        title: SPORT_NAME_MAP[sport.key] || sport.title,
       })),
     ],
     [sports]
@@ -128,7 +145,7 @@ export default function OddsPage() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-white">Live Odds</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Spreads, moneylines, and totals across all available sports
+          Live odds for NBA, NFL, NHL, MMA, Soccer, WNBA, Golf, and NASCAR
         </p>
       </div>
 
@@ -179,36 +196,34 @@ function normalizeOdds(apiData: any[], sportTitle: string): OddsPageRow[] {
 
   const rows: OddsPageRow[] = [];
 
-  for (const game of apiData) {
-    const homeTeam = game.home_team ?? 'Home Team';
-    const awayTeam = game.away_team ?? 'Away Team';
-    const event = `${awayTeam} @ ${homeTeam}`;
-    const commenceTime = game.commence_time
-      ? new Date(game.commence_time).toLocaleString()
+  for (const item of apiData) {
+    const bookmakers = Array.isArray(item.bookmakers) ? item.bookmakers : [];
+    const commenceTime = item.commence_time
+      ? new Date(item.commence_time).toLocaleString()
       : '-';
 
-    for (const bookmaker of game.bookmakers ?? []) {
-      for (const market of bookmaker.markets ?? []) {
-        for (const outcome of market.outcomes ?? []) {
-          let line = outcome.name ?? '-';
+    const isTeamEvent = item.home_team || item.away_team;
+    const eventLabel = isTeamEvent
+      ? `${item.away_team ?? 'Away'} @ ${item.home_team ?? 'Home'}`
+      : item.name || item.description || item.id || 'Outright Market';
 
-          if (typeof outcome.point === 'number') {
-            line += ` ${outcome.point > 0 ? '+' : ''}${outcome.point}`;
-          }
+    for (const bookmaker of bookmakers) {
+      const markets = Array.isArray(bookmaker.markets) ? bookmaker.markets : [];
+
+      for (const market of markets) {
+        const outcomes = Array.isArray(market.outcomes) ? market.outcomes : [];
+
+        for (const outcome of outcomes) {
+          const line = buildLineLabel(market.key, outcome);
 
           rows.push({
-            id: `${game.id}-${bookmaker.key}-${market.key}-${outcome.name}`,
+            id: `${item.id}-${bookmaker.key}-${market.key}-${outcome.name}`,
             sport: sportTitle,
-            event,
+            event: eventLabel,
             market: formatMarketName(market.key),
             book: bookmaker.title ?? bookmaker.key ?? '-',
             line,
-            price:
-              typeof outcome.price === 'number'
-                ? outcome.price > 0
-                  ? `+${outcome.price}`
-                  : `${outcome.price}`
-                : '-',
+            price: formatAmericanOdds(outcome.price),
             commenceTime,
           });
         }
@@ -219,6 +234,33 @@ function normalizeOdds(apiData: any[], sportTitle: string): OddsPageRow[] {
   return rows;
 }
 
+function buildLineLabel(marketKey: string, outcome: any) {
+  const name = outcome?.name ?? '-';
+  const point =
+    typeof outcome?.point === 'number'
+      ? `${outcome.point > 0 ? '+' : ''}${outcome.point}`
+      : '';
+
+  if (marketKey === 'spreads') {
+    return point ? `${name} ${point}` : name;
+  }
+
+  if (marketKey === 'totals') {
+    return point ? `${name} ${point}` : name;
+  }
+
+  if (marketKey === 'outrights') {
+    return name;
+  }
+
+  return point ? `${name} ${point}` : name;
+}
+
+function formatAmericanOdds(price: unknown) {
+  if (typeof price !== 'number') return '-';
+  return price > 0 ? `+${price}` : `${price}`;
+}
+
 function formatMarketName(market: string) {
   switch (market) {
     case 'h2h':
@@ -227,6 +269,8 @@ function formatMarketName(market: string) {
       return 'Spread';
     case 'totals':
       return 'Total';
+    case 'outrights':
+      return 'Outright';
     default:
       return market;
   }
