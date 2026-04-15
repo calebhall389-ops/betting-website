@@ -46,8 +46,10 @@ type CandidatePick = {
   ev: number;
 };
 
-const MIN_EDGE = 0.012; // 1.2%
-const MIN_EV = 0.025; // 0.025 units
+const MIN_EDGE_STRONG = 0.015; // 1.5%
+const MIN_EV_STRONG = 0.04; // 0.04 units
+const MIN_EDGE_OK = 0.012; // 1.2%
+const MIN_EV_OK = 0.025; // 0.025 units
 const MAX_FAVORITE_PRICE = -250;
 const MAX_PICKS = 5;
 
@@ -79,8 +81,12 @@ export async function GET(request: NextRequest) {
 
   try {
     const apiKey = process.env.ODDS_API_KEY;
+
     if (!apiKey) {
-      return NextResponse.json({ error: 'Missing ODDS_API_KEY' }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Missing ODDS_API_KEY' },
+        { status: 500 }
+      );
     }
 
     const url =
@@ -117,7 +123,10 @@ export async function GET(request: NextRequest) {
       .gte('created_at', startOfUtcDay);
 
     if (existingError) {
-      return NextResponse.json({ error: existingError.message }, { status: 500 });
+      return NextResponse.json(
+        { error: existingError.message },
+        { status: 500 }
+      );
     }
 
     const existingSet = new Set(
@@ -149,25 +158,35 @@ export async function GET(request: NextRequest) {
           const allPrices = allTeamPrices.get(outcome.name) ?? [];
           if (allPrices.length < 2) continue;
 
-          const otherBookPrices = allPrices.filter((p) => p !== outcome.price);
+          const priceIndex = allPrices.indexOf(outcome.price);
           const pricesForConsensus =
-            otherBookPrices.length > 0 ? otherBookPrices : allPrices;
+            priceIndex >= 0
+              ? allPrices.filter((_, i) => i !== priceIndex)
+              : allPrices;
 
-          const implieds = pricesForConsensus.map(americanToImpliedProbability);
+          if (pricesForConsensus.length === 0) continue;
+
+          const implieds = pricesForConsensus.map(
+            americanToImpliedProbability
+          );
+
           const consensusProbability =
             implieds.reduce((sum, n) => sum + n, 0) / implieds.length;
 
           const bookProbability = americanToImpliedProbability(outcome.price);
           const edge = consensusProbability - bookProbability;
           const ev = expectedValue(consensusProbability, outcome.price, 1);
+
           const isTooExpensiveFavorite =
             outcome.price < 0 && outcome.price < MAX_FAVORITE_PRICE;
 
-          const passesStrong = edge >= MIN_EDGE_STRONG && ev >= MIN_EV_STRONG;
+          const passesStrong =
+            edge >= MIN_EDGE_STRONG && ev >= MIN_EV_STRONG;
+
           const passesOkay = edge >= MIN_EDGE_OK && ev >= MIN_EV_OK;
 
-if (isTooExpensiveFavorite) continue;
-if (!passesStrong && !passesOkay) continue;
+          if (isTooExpensiveFavorite) continue;
+          if (!passesStrong && !passesOkay) continue;
 
           const pick = `${outcome.name} ML`;
           const dedupeKey = `${game}__${pick}`;
@@ -236,7 +255,10 @@ if (!passesStrong && !passesOkay) continue;
       .select();
 
     if (insertError) {
-      return NextResponse.json({ error: insertError.message }, { status: 500 });
+      return NextResponse.json(
+        { error: insertError.message },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
@@ -250,4 +272,5 @@ if (!passesStrong && !passesOkay) continue;
       { status: 500 }
     );
   }
+}
 }
