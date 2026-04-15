@@ -48,7 +48,7 @@ export default async function HomePage() {
       'id,created_at,sport,game,pick,odds,confidence,stake,result,profit'
     )
     .order('created_at', { ascending: false })
-    .limit(20);
+    .limit(100);
 
   if (error) {
     return (
@@ -61,12 +61,21 @@ export default async function HomePage() {
 
   const picks = (data ?? []) as PickRow[];
 
+  const today = new Date();
+  const todayString = today.toISOString().slice(0, 10);
+
+  const todaysPicks = picks.filter(
+    (pick) => pick.created_at.slice(0, 10) === todayString
+  );
+
   const graded = picks.filter(
     (pick) =>
       pick.result === 'win' ||
       pick.result === 'loss' ||
       pick.result === 'push'
   );
+
+  const recentResults = graded.slice(0, 15);
 
   const wins = graded.filter((pick) => pick.result === 'win').length;
   const losses = graded.filter((pick) => pick.result === 'loss').length;
@@ -89,11 +98,11 @@ export default async function HomePage() {
 
   return (
     <main className="p-6 space-y-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-3xl font-bold">Betting Dashboard</h1>
           <p className="text-gray-500 mt-1">
-            Automated picks, results, profit, and ROI.
+            Today’s picks, tracked results, profit, and ROI.
           </p>
         </div>
 
@@ -103,6 +112,65 @@ export default async function HomePage() {
         >
           View Full Results
         </Link>
+      </div>
+
+      <div className="rounded-2xl border shadow-sm overflow-hidden">
+        <div className="p-4 border-b flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold">Today&apos;s Picks</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Latest automated picks generated today.
+            </p>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr className="text-left">
+                <th className="p-3">Time</th>
+                <th className="p-3">Sport</th>
+                <th className="p-3">Game</th>
+                <th className="p-3">Pick</th>
+                <th className="p-3">Odds</th>
+                <th className="p-3">Confidence</th>
+                <th className="p-3">Stake</th>
+                <th className="p-3">Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {todaysPicks.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="p-4 text-center text-gray-500">
+                    No picks generated today yet.
+                  </td>
+                </tr>
+              ) : (
+                todaysPicks.map((pick) => (
+                  <tr key={pick.id} className="border-t">
+                    <td className="p-3">
+                      {new Date(pick.created_at).toLocaleTimeString([], {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </td>
+                    <td className="p-3">{pick.sport}</td>
+                    <td className="p-3">{pick.game}</td>
+                    <td className="p-3">{pick.pick}</td>
+                    <td className="p-3">
+                      {pick.odds > 0 ? `+${pick.odds}` : pick.odds}
+                    </td>
+                    <td className="p-3">{pick.confidence}</td>
+                    <td className="p-3">
+                      {formatMoney(Number(pick.stake ?? 0))}
+                    </td>
+                    <td className="p-3 capitalize">{pick.result}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
@@ -151,7 +219,13 @@ export default async function HomePage() {
 
       <div className="rounded-2xl border shadow-sm overflow-hidden">
         <div className="p-4 border-b flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Latest Picks</h2>
+          <div>
+            <h2 className="text-xl font-semibold">Recent Results</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Most recently graded picks.
+            </p>
+          </div>
+
           <Link
             href="/results"
             className="text-sm font-medium text-blue-600 hover:underline"
@@ -174,14 +248,14 @@ export default async function HomePage() {
               </tr>
             </thead>
             <tbody>
-              {picks.length === 0 ? (
+              {recentResults.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="p-4 text-center text-gray-500">
-                    No picks found yet.
+                    No graded results yet.
                   </td>
                 </tr>
               ) : (
-                picks.map((pick) => (
+                recentResults.map((pick) => (
                   <tr key={pick.id} className="border-t">
                     <td className="p-3">
                       {new Date(pick.created_at).toLocaleDateString()}
@@ -196,7 +270,9 @@ export default async function HomePage() {
                     </td>
                     <td className="p-3 capitalize">{pick.result}</td>
                     <td className="p-3">
-                      {pick.profit === null ? '-' : formatMoney(Number(pick.profit))}
+                      {pick.profit === null
+                        ? '-'
+                        : formatMoney(Number(pick.profit))}
                     </td>
                   </tr>
                 ))
