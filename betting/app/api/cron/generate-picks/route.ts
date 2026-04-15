@@ -46,9 +46,9 @@ type CandidatePick = {
   ev: number;
 };
 
-const MIN_EDGE = 0.015; // 1.5%
-const MIN_EV = 0.04; // 0.04 units
-const MAX_FAVORITE_PRICE = -250; // reject favorites more expensive than -250
+const MIN_EDGE = 0.012; // 1.2%
+const MIN_EV = 0.025; // 0.025 units
+const MAX_FAVORITE_PRICE = -250;
 const MAX_PICKS = 5;
 
 function getAdminSupabase() {
@@ -160,13 +160,14 @@ export async function GET(request: NextRequest) {
           const bookProbability = americanToImpliedProbability(outcome.price);
           const edge = consensusProbability - bookProbability;
           const ev = expectedValue(consensusProbability, outcome.price, 1);
-
           const isTooExpensiveFavorite =
             outcome.price < 0 && outcome.price < MAX_FAVORITE_PRICE;
 
-          if (edge < MIN_EDGE) continue;
-          if (ev < MIN_EV) continue;
-          if (isTooExpensiveFavorite) continue;
+          const passesStrong = edge >= MIN_EDGE_STRONG && ev >= MIN_EV_STRONG;
+          const passesOkay = edge >= MIN_EDGE_OK && ev >= MIN_EV_OK;
+
+if (isTooExpensiveFavorite) continue;
+if (!passesStrong && !passesOkay) continue;
 
           const pick = `${outcome.name} ML`;
           const dedupeKey = `${game}__${pick}`;
