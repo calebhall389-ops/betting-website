@@ -56,15 +56,6 @@ type CandidatePick = {
   ev: number;
 };
 
-type SportDebug = {
-  sport: string;
-  status: 'ok' | 'error';
-  events: number;
-  candidates: number;
-  insertedCandidates: number;
-  message?: string;
-};
-
 const MIN_EDGE_STRONG = 0.01;
 const MIN_EV_STRONG = 0.02;
 const MIN_EDGE_OK = 0.005;
@@ -156,13 +147,12 @@ function marketDisplayName(marketKey: string) {
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
 
-const authHeader = request.headers.get('authorization');
-
-if (process.env.CRON_SECRET) {
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (process.env.CRON_SECRET) {
+    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
   }
-}
+
   try {
     const apiKey = process.env.ODDS_API_KEY;
 
@@ -197,161 +187,131 @@ if (process.env.CRON_SECRET) {
     );
 
     const candidates: CandidatePick[] = [];
-    const debug: SportDebug[] = [];
 
     for (const sport of SPORTS) {
-      const sportStartCount = candidates.length;
+      const url =
+        `https://api.the-odds-api.com/v4/sports/${sport.key}/odds` +
+        `?apiKey=${apiKey}` +
+        `&regions=us` +
+        `&markets=h2h,spreads,totals` +
+        `&oddsFormat=american`;
 
-      try {
-        const url =
-          `https://api.the-odds-api.com/v4/sports/${sport.key}/odds` +
-          `?apiKey=${apiKey}` +
-          `&regions=us` +
-          `&markets=h2h,spreads,totals` +
-          `&oddsFormat=american`;
+      const oddsRes = await fetch(url, {
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
+      });
 
-        const oddsRes = await fetch(url, {
-          cache: 'no-store',
-          headers: { Accept: 'application/json' },
-        });
+      if (!oddsRes.ok) {
+        continue;
+      }
 
-        if (!oddsRes.ok) {
-          const text = await oddsRes.text();
-          debug.push({
-            sport: sport.label,
-            status: 'error',
-            events: 0,
-            candidates: 0,
-            insertedCandidates: 0,
-            message: text.slice(0, 300),
-          });
-          continue;
-        }
+      const events = (await oddsRes.json()) as OddsEvent[];
 
-        const events = (await oddsRes.json()) as OddsEvent[];
+      for (const event of events) {
+        const game = `${event.away_team} at ${event.home_team}`;
+        const marketPriceMap = new Map<string, number[]>();
 
-        for (const event of events) {
-          const game = `${event.away_team} at ${event.home_team}`;
-          const marketPriceMap = new Map<string, number[]>();
+        for (const bookmaker of event.bookmakers ?? []) {
+          for (const market of bookmaker.markets ?? []) {
+            if (!['h2h', 'spreads', 'totals'].includes(market.key)) continue;
 
-          for (const bookmaker of event.bookmakers ?? []) {
-            for (const market of bookmaker.markets ?? []) {
-              if (!['h2h', 'spreads', 'totals'].includes(market.key)) continue;
+            for (const outcome of market.outcomes ?? []) {
+              const pointKey =
+                typeof outcome.point === 'number'
+                  ? `${outcome.point}`
+                  : 'none';
 
-              for (const outcome of market.outcomes ?? []) {
-                const pointKey =
-                  typeof outcome.point === 'number'
-                    ? `${outcome.point}`
-                    : 'none';
-
-                const marketOutcomeKey = `${market.key}__${outcome.name}__${pointKey}`;
-                const arr = marketPriceMap.get(marketOutcomeKey) ?? [];
-                arr.push(outcome.price);
-                marketPriceMap.set(marketOutcomeKey, arr);
-              }
-            }
-          }
-
-          for (const bookmaker of event.bookmakers ?? []) {
-            for (const market of bookmaker.markets ?? []) {
-              if (!['h2h', 'spreads', 'totals'].includes(market.key)) continue;
-
-              for (const outcome of market.outcomes ?? []) {
-                const pointKey =
-                  typeof outcome.point === 'number'
-                    ? `${outcome.point}`
-                    : 'none';
-
-                const marketOutcomeKey = `${market.key}__${outcome.name}__${pointKey}`;
-                const allPrices = marketPriceMap.get(marketOutcomeKey) ?? [];
-
-                if (allPrices.length < 2) continue;
-
-                const priceIndex = allPrices.indexOf(outcome.price);
-                const pricesForConsensus =
-                  priceIndex >= 0
-                    ? allPrices.filter((_, i) => i !== priceIndex)
-                    : allPrices;
-
-                if (pricesForConsensus.length === 0) continue;
-
-                const implieds = pricesForConsensus.map(
-                  americanToImpliedProbability
-                );
-
-                const consensusProbability =
-                  implieds.reduce((sum, n) => sum + n, 0) / implieds.length;
-
-                const bookProbability = americanToImpliedProbability(outcome.price);
-                const edge = consensusProbability - bookProbability;
-                const ev = expectedValue(consensusProbability, outcome.price, 1);
-
-                const isTooExpensiveFavorite =
-                  outcome.price < 0 && outcome.price < MAX_FAVORITE_PRICE;
-
-                const isTooLargeUnderdog =
-                  outcome.price > 0 && outcome.price > MAX_UNDERDOG_PRICE;
-
-                const passesStrong =
-                  edge >= MIN_EDGE_STRONG && ev >= MIN_EV_STRONG;
-
-                const passesOkay =
-                  edge >= MIN_EDGE_OK && ev >= MIN_EV_OK;
-
-                if (isTooExpensiveFavorite || isTooLargeUnderdog) continue;
-                if (!passesStrong && !passesOkay) continue;
-
-                const pick = buildPickLabel(market.key, outcome);
-                const dedupeKey = `${game}__${pick}`;
-
-                if (existingSet.has(dedupeKey)) continue;
-
-                const stake = kellyStake(
-                  consensusProbability,
-                  outcome.price,
-                  BANKROLL
-                );
-
-                if (stake <= 0) continue;
-
-                candidates.push({
-                  sport: sport.label,
-                  game,
-                  pick,
-                  odds: outcome.price,
-                  confidence: confidenceFromEV(ev),
-                  analysis:
-                    `${bookmaker.title} is offering ${outcome.price} on ${pick}. ` +
-                    `Consensus implied probability is ${(consensusProbability * 100).toFixed(1)}% ` +
-                    `vs this book at ${(bookProbability * 100).toFixed(1)}%. ` +
-                    `Market: ${marketDisplayName(market.key)}. ` +
-                    `Edge: ${(edge * 100).toFixed(1)}%. EV: ${ev.toFixed(3)}u.`,
-                  stake,
-                  result: 'pending',
-                  edge,
-                  ev,
-                });
-              }
+              const marketOutcomeKey = `${market.key}__${outcome.name}__${pointKey}`;
+              const arr = marketPriceMap.get(marketOutcomeKey) ?? [];
+              arr.push(outcome.price);
+              marketPriceMap.set(marketOutcomeKey, arr);
             }
           }
         }
 
-        debug.push({
-          sport: sport.label,
-          status: 'ok',
-          events: events.length,
-          candidates: candidates.length - sportStartCount,
-          insertedCandidates: 0,
-        });
-      } catch (error) {
-        debug.push({
-          sport: sport.label,
-          status: 'error',
-          events: 0,
-          candidates: 0,
-          insertedCandidates: 0,
-          message: error instanceof Error ? error.message : 'Unknown error',
-        });
+        for (const bookmaker of event.bookmakers ?? []) {
+          for (const market of bookmaker.markets ?? []) {
+            if (!['h2h', 'spreads', 'totals'].includes(market.key)) continue;
+
+            for (const outcome of market.outcomes ?? []) {
+              const pointKey =
+                typeof outcome.point === 'number'
+                  ? `${outcome.point}`
+                  : 'none';
+
+              const marketOutcomeKey = `${market.key}__${outcome.name}__${pointKey}`;
+              const allPrices = marketPriceMap.get(marketOutcomeKey) ?? [];
+
+              if (allPrices.length < 2) continue;
+
+              const priceIndex = allPrices.indexOf(outcome.price);
+              const pricesForConsensus =
+                priceIndex >= 0
+                  ? allPrices.filter((_, i) => i !== priceIndex)
+                  : allPrices;
+
+              if (pricesForConsensus.length === 0) continue;
+
+              const implieds = pricesForConsensus.map(
+                americanToImpliedProbability
+              );
+
+              const consensusProbability =
+                implieds.reduce((sum, n) => sum + n, 0) / implieds.length;
+
+              const bookProbability =
+                americanToImpliedProbability(outcome.price);
+              const edge = consensusProbability - bookProbability;
+              const ev = expectedValue(consensusProbability, outcome.price, 1);
+
+              const isTooExpensiveFavorite =
+                outcome.price < 0 && outcome.price < MAX_FAVORITE_PRICE;
+
+              const isTooLargeUnderdog =
+                outcome.price > 0 && outcome.price > MAX_UNDERDOG_PRICE;
+
+              const passesStrong =
+                edge >= MIN_EDGE_STRONG && ev >= MIN_EV_STRONG;
+
+              const passesOkay =
+                edge >= MIN_EDGE_OK && ev >= MIN_EV_OK;
+
+              if (isTooExpensiveFavorite || isTooLargeUnderdog) continue;
+              if (!passesStrong && !passesOkay) continue;
+
+              const pick = buildPickLabel(market.key, outcome);
+              const dedupeKey = `${game}__${pick}`;
+
+              if (existingSet.has(dedupeKey)) continue;
+
+              const stake = kellyStake(
+                consensusProbability,
+                outcome.price,
+                BANKROLL
+              );
+
+              if (stake <= 0) continue;
+
+              candidates.push({
+                sport: sport.label,
+                game,
+                pick,
+                odds: outcome.price,
+                confidence: confidenceFromEV(ev),
+                analysis:
+                  `${bookmaker.title} is offering ${outcome.price} on ${pick}. ` +
+                  `Consensus implied probability is ${(consensusProbability * 100).toFixed(1)}% ` +
+                  `vs this book at ${(bookProbability * 100).toFixed(1)}%. ` +
+                  `Market: ${marketDisplayName(market.key)}. ` +
+                  `Edge: ${(edge * 100).toFixed(1)}%. EV: ${ev.toFixed(3)}u.`,
+                stake,
+                result: 'pending',
+                edge,
+                ev,
+              });
+            }
+          }
+        }
       }
     }
 
@@ -360,7 +320,17 @@ if (process.env.CRON_SECRET) {
     for (const candidate of candidates) {
       const current = bestByGame.get(candidate.game);
 
-      if (!current || candidate.ev > current.ev) {
+      if (!current) {
+        bestByGame.set(candidate.game, candidate);
+        continue;
+      }
+
+      if (candidate.ev > current.ev) {
+        bestByGame.set(candidate.game, candidate);
+        continue;
+      }
+
+      if (candidate.ev === current.ev && candidate.edge > current.edge) {
         bestByGame.set(candidate.game, candidate);
       }
     }
@@ -373,18 +343,11 @@ if (process.env.CRON_SECRET) {
       .slice(0, MAX_PICKS)
       .map(({ edge, ev, ...row }) => row);
 
-    for (const item of debug) {
-      item.insertedCandidates = finalPicks.filter(
-        (pick) => pick.sport === item.sport
-      ).length;
-    }
-
     if (finalPicks.length === 0) {
       return NextResponse.json({
         success: true,
         inserted: 0,
         message: 'No qualifying EV picks found today.',
-        debug,
       });
     }
 
@@ -395,7 +358,7 @@ if (process.env.CRON_SECRET) {
 
     if (insertError) {
       return NextResponse.json(
-        { error: insertError.message, debug },
+        { error: insertError.message },
         { status: 500 }
       );
     }
@@ -404,13 +367,10 @@ if (process.env.CRON_SECRET) {
       success: true,
       inserted: inserted?.length ?? 0,
       picks: inserted ?? [],
-      debug,
     });
   } catch (error) {
     return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      },
+      { error: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }
