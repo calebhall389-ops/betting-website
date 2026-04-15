@@ -144,6 +144,17 @@ function marketDisplayName(marketKey: string) {
   }
 }
 
+function isSameUtcDay(dateString: string) {
+  const eventDate = new Date(dateString);
+  const now = new Date();
+
+  return (
+    eventDate.getUTCFullYear() === now.getUTCFullYear() &&
+    eventDate.getUTCMonth() === now.getUTCMonth() &&
+    eventDate.getUTCDate() === now.getUTCDate()
+  );
+}
+
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
 
@@ -208,6 +219,9 @@ export async function GET(request: NextRequest) {
       const events = (await oddsRes.json()) as OddsEvent[];
 
       for (const event of events) {
+        if (!event.commence_time) continue;
+        if (!isSameUtcDay(event.commence_time)) continue;
+
         const game = `${event.away_team} at ${event.home_team}`;
         const marketPriceMap = new Map<string, number[]>();
 
@@ -347,7 +361,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No qualifying EV picks found today.',
+        message: 'No qualifying same-day EV picks found today.',
       });
     }
 
