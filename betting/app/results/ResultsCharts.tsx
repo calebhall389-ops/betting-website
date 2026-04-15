@@ -16,7 +16,7 @@ import {
 type ProfitData = {
   date: string;
   profit: number;
-  cumulativeProfit: number;
+  bankroll: number;
 };
 
 type ConfidenceData = {
@@ -35,10 +35,9 @@ export default function ResultsCharts({
 }: Props) {
   return (
     <div className="space-y-6">
-      {/* Cumulative Profit Chart */}
       <div className="rounded-2xl border p-4 shadow-sm">
         <h2 className="text-xl font-semibold mb-4">
-          Cumulative Profit
+          Bankroll Over Time
         </h2>
         <ResponsiveContainer width="100%" height={300}>
           <LineChart data={profitData}>
@@ -49,16 +48,15 @@ export default function ResultsCharts({
             <Legend />
             <Line
               type="monotone"
-              dataKey="cumulativeProfit"
+              dataKey="bankroll"
               stroke="#16a34a"
               strokeWidth={3}
-              name="Profit ($)"
+              name="Bankroll ($)"
             />
           </LineChart>
         </ResponsiveContainer>
       </div>
 
-      {/* Confidence Distribution */}
       <div className="rounded-2xl border p-4 shadow-sm">
         <h2 className="text-xl font-semibold mb-4">
           Bets by Confidence Level
