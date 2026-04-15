@@ -1,13 +1,21 @@
-import { DEFAULT_SPORTS, EXCLUDED_SPORTS_PREFIXES, USE_WHITELIST_ONLY, SupportedSport } from './sports';
+export type SupportedSport = {
+  key: string;
+  group: string;
+  title: string;
+  active: boolean;
+  has_outrights?: boolean;
+};
 
-const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const ODDS_API_BASE = 'https://api.the-odds-api.com/v4';
 
 function requireApiKey() {
-  if (!ODDS_API_KEY) {
+  const apiKey = process.env.ODDS_API_KEY;
+
+  if (!apiKey) {
     throw new Error('Missing ODDS_API_KEY');
   }
-  return ODDS_API_KEY;
+
+  return apiKey;
 }
 
 export async function fetchAvailableSports(): Promise<SupportedSport[]> {
@@ -17,7 +25,7 @@ export async function fetchAvailableSports(): Promise<SupportedSport[]> {
     `${ODDS_API_BASE}/sports?apiKey=${apiKey}&all=true`,
     {
       method: 'GET',
-      next: { revalidate: 3600 }, // cache 1 hour
+      cache: 'no-store',
     }
   );
 
@@ -28,16 +36,7 @@ export async function fetchAvailableSports(): Promise<SupportedSport[]> {
 
   const sports = (await res.json()) as SupportedSport[];
 
-  let filtered = sports.filter(
-    (sport) =>
-      !EXCLUDED_SPORTS_PREFIXES.some((prefix) => sport.key.startsWith(prefix))
-  );
-
-  if (USE_WHITELIST_ONLY) {
-    filtered = filtered.filter((sport) => DEFAULT_SPORTS.includes(sport.key));
-  }
-
-  return filtered.sort((a, b) => {
+  return sports.sort((a, b) => {
     if (a.active !== b.active) return a.active ? -1 : 1;
     return a.title.localeCompare(b.title);
   });
@@ -57,7 +56,7 @@ export async function fetchOddsForSport(sportKey: string) {
     `${ODDS_API_BASE}/sports/${sportKey}/odds?${params.toString()}`,
     {
       method: 'GET',
-      next: { revalidate: 300 }, // cache 5 min
+      cache: 'no-store',
     }
   );
 
@@ -66,5 +65,5 @@ export async function fetchOddsForSport(sportKey: string) {
     throw new Error(`Failed to load odds for ${sportKey}: ${text}`);
   }
 
-  return res.json();
+  return await res.json();
 }
