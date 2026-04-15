@@ -6,6 +6,30 @@ export type SupportedSport = {
   has_outrights?: boolean;
 };
 
+export const ALLOWED_SPORT_KEYS = [
+  'basketball_nba',
+  'americanfootball_nfl',
+  'icehockey_nhl',
+  'mma_mixed_martial_arts',
+  'soccer_epl',
+  'soccer_usa_mls',
+  'basketball_wnba',
+  'golf_pga_championship_winner',
+  'motorsport_nascar_cup',
+];
+
+export const SPORT_NAME_MAP: Record<string, string> = {
+  basketball_nba: 'NBA',
+  americanfootball_nfl: 'NFL',
+  icehockey_nhl: 'NHL',
+  mma_mixed_martial_arts: 'MMA',
+  soccer_epl: 'Soccer (EPL)',
+  soccer_usa_mls: 'Soccer (MLS)',
+  basketball_wnba: 'WNBA',
+  golf_pga_championship_winner: 'Golf',
+  motorsport_nascar_cup: 'NASCAR',
+};
+
 const ODDS_API_BASE = 'https://api.the-odds-api.com/v4';
 
 function requireApiKey() {
@@ -36,10 +60,13 @@ export async function fetchAvailableSports(): Promise<SupportedSport[]> {
 
   const sports = (await res.json()) as SupportedSport[];
 
-  return sports.sort((a, b) => {
-    if (a.active !== b.active) return a.active ? -1 : 1;
-    return a.title.localeCompare(b.title);
-  });
+  return sports
+    .filter((sport) => ALLOWED_SPORT_KEYS.includes(sport.key))
+    .sort((a, b) => {
+      const aLabel = SPORT_NAME_MAP[a.key] || a.title;
+      const bLabel = SPORT_NAME_MAP[b.key] || b.title;
+      return aLabel.localeCompare(bLabel);
+    });
 }
 
 export async function fetchOddsForSport(sportKey: string) {
@@ -48,7 +75,11 @@ export async function fetchOddsForSport(sportKey: string) {
   const params = new URLSearchParams({
     apiKey,
     regions: 'us',
-    markets: 'h2h,spreads,totals',
+    markets:
+      sportKey === 'golf_pga_championship_winner' ||
+      sportKey === 'motorsport_nascar_cup'
+        ? 'outrights'
+        : 'h2h,spreads,totals',
     oddsFormat: 'american',
   });
 
