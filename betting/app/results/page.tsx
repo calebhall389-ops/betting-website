@@ -1,6 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import ResultsCharts from './ResultsCharts';
 
+const STARTING_BANKROLL = Number(
+  process.env.NEXT_PUBLIC_BANKROLL ?? 1000
+);
 export const dynamic = 'force-dynamic';
 
 type PickRow = {
