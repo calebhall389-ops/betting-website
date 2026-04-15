@@ -18,6 +18,16 @@ export const ALLOWED_SPORT_KEYS = [
   'motorsport_nascar_cup',
 ];
 
+export const PICKS_SPORT_KEYS = [
+  'basketball_nba',
+  'americanfootball_nfl',
+  'icehockey_nhl',
+  'mma_mixed_martial_arts',
+  'soccer_epl',
+  'soccer_usa_mls',
+  'basketball_wnba',
+];
+
 export const SPORT_NAME_MAP: Record<string, string> = {
   basketball_nba: 'NBA',
   americanfootball_nfl: 'NFL',
@@ -72,14 +82,16 @@ export async function fetchAvailableSports(): Promise<SupportedSport[]> {
 export async function fetchOddsForSport(sportKey: string) {
   const apiKey = requireApiKey();
 
+  const markets =
+    sportKey === 'golf_pga_championship_winner' ||
+    sportKey === 'motorsport_nascar_cup'
+      ? 'outrights'
+      : 'h2h,spreads,totals';
+
   const params = new URLSearchParams({
     apiKey,
     regions: 'us',
-    markets:
-      sportKey === 'golf_pga_championship_winner' ||
-      sportKey === 'motorsport_nascar_cup'
-        ? 'outrights'
-        : 'h2h,spreads,totals',
+    markets,
     oddsFormat: 'american',
   });
 
