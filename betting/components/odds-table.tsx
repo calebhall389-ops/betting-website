@@ -1,111 +1,57 @@
-'use client';
+type OddsRow = {
+  id: string;
+  sport: string;
+  event: string;
+  market: string;
+  book: string;
+  line: string;
+  price: string;
+  commenceTime: string;
+};
 
-import { OddsEntry } from '@/lib/types';
-import { cn, formatOdds, formatSpread, getSportColor, formatDate } from '@/lib/utils';
-import { Clock } from 'lucide-react';
-
-interface OddsTableProps {
-  odds: OddsEntry[];
-}
+type OddsTableProps = {
+  odds: OddsRow[];
+};
 
 export default function OddsTable({ odds }: OddsTableProps) {
-  if (odds.length === 0) {
-    return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-10 text-center">
-        <p className="text-slate-500 text-sm">No odds available.</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+    <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-800 bg-slate-800/50">
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-12">Sport</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Matchup</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Date / Time</th>
-              <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider">Spread</th>
-              <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider">Moneyline</th>
-              <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider">Total</th>
+          <thead className="bg-slate-800/60 text-left text-slate-400">
+            <tr>
+              <th className="p-3">Sport</th>
+              <th className="p-3">Event</th>
+              <th className="p-3">Market</th>
+              <th className="p-3">Sportsbook</th>
+              <th className="p-3">Line</th>
+              <th className="p-3">Odds</th>
+              <th className="p-3">Start Time</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/50">
-            {odds.map((entry) => (
-              <tr key={entry.id} className="hover:bg-slate-800/30 transition-colors">
-                <td className="px-4 py-4">
-                  <span className={cn('text-xs font-semibold px-1.5 py-0.5 rounded border', getSportColor(entry.sport))}>
-                    {entry.sport}
-                  </span>
-                </td>
-                <td className="px-4 py-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-500 w-8 text-right">AWAY</span>
-                      <span className="text-sm font-medium text-white">{entry.away_team}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-500 w-8 text-right">HOME</span>
-                      <span className="text-sm font-medium text-slate-300">{entry.home_team}</span>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-4">
-                  <div className="space-y-0.5">
-                    <p className="text-sm text-slate-300">{formatDate(entry.game_date)}</p>
-                    <p className="text-xs text-slate-500 flex items-center gap-1">
-                      <Clock size={10} />
-                      {entry.game_time}
-                    </p>
-                  </div>
-                </td>
-                <td className="px-4 py-4">
-                  <div className="text-center space-y-1">
-                    <div className="flex justify-center gap-3">
-                      <span className="text-sm font-medium text-slate-200">
-                        {formatSpread(entry.spread_away)}
-                      </span>
-                      <span className="text-xs text-slate-500">{formatOdds(entry.spread_away_odds)}</span>
-                    </div>
-                    <div className="flex justify-center gap-3">
-                      <span className="text-sm font-medium text-slate-200">
-                        {formatSpread(entry.spread_home)}
-                      </span>
-                      <span className="text-xs text-slate-500">{formatOdds(entry.spread_home_odds)}</span>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-4">
-                  <div className="text-center space-y-1">
-                    <div>
-                      <span className={cn('text-sm font-semibold', entry.moneyline_away > 0 ? 'text-emerald-400' : 'text-slate-200')}>
-                        {formatOdds(entry.moneyline_away)}
-                      </span>
-                    </div>
-                    <div>
-                      <span className={cn('text-sm font-semibold', entry.moneyline_home > 0 ? 'text-emerald-400' : 'text-slate-200')}>
-                        {formatOdds(entry.moneyline_home)}
-                      </span>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-4">
-                  <div className="text-center space-y-1">
-                    <div className="flex justify-center gap-2">
-                      <span className="text-xs text-slate-500">O</span>
-                      <span className="text-sm text-slate-200">{entry.total}</span>
-                      <span className="text-xs text-slate-500">{formatOdds(entry.over_odds)}</span>
-                    </div>
-                    <div className="flex justify-center gap-2">
-                      <span className="text-xs text-slate-500">U</span>
-                      <span className="text-sm text-slate-200">{entry.total}</span>
-                      <span className="text-xs text-slate-500">{formatOdds(entry.under_odds)}</span>
-                    </div>
-                  </div>
+
+          <tbody>
+            {odds.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="p-4 text-center text-slate-400">
+                  No odds found.
                 </td>
               </tr>
-            ))}
+            ) : (
+              odds.map((row) => (
+                <tr key={row.id} className="border-t border-slate-800">
+                  <td className="p-3 text-white">{row.sport}</td>
+                  <td className="p-3 text-white">{row.event}</td>
+                  <td className="p-3 text-slate-300">{row.market}</td>
+                  <td className="p-3 text-slate-300">{row.book}</td>
+                  <td className="p-3 text-slate-300">{row.line}</td>
+                  <td className="p-3 font-semibold text-emerald-400">
+                    {row.price}
+                  </td>
+                  <td className="p-3 text-slate-400">{row.commenceTime}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
