@@ -7,10 +7,18 @@ export async function GET(request: Request) {
   const sport = searchParams.get('sport');
 
   try {
-    let query = supabase
-      .from('odds')
-      .select('*')
-      .order('game_date', { ascending: true });
+    if (!supabase) {
+      const filtered =
+        sport && sport !== 'All'
+          ? mockOdds.filter((o) => o.sport === sport)
+          : mockOdds;
+
+      return NextResponse.json({ odds: filtered });
+    }
+
+    let query = supabase.from('odds').select('*').order('game_date', {
+      ascending: true,
+    });
 
     if (sport && sport !== 'All') {
       query = query.eq('sport', sport);
@@ -19,16 +27,19 @@ export async function GET(request: Request) {
     const { data, error } = await query;
 
     if (error) {
-      const filtered = sport && sport !== 'All'
-        ? mockOdds.filter((o) => o.sport === sport)
-        : mockOdds;
+      const filtered =
+        sport && sport !== 'All'
+          ? mockOdds.filter((o) => o.sport === sport)
+          : mockOdds;
+
       return NextResponse.json({ odds: filtered });
     }
 
     const result = data?.length ? data : mockOdds;
-    const filtered = sport && sport !== 'All'
-      ? result.filter((o: { sport: string }) => o.sport === sport)
-      : result;
+    const filtered =
+      sport && sport !== 'All'
+        ? result.filter((o: { sport: string }) => o.sport === sport)
+        : result;
 
     return NextResponse.json({ odds: filtered });
   } catch {
@@ -38,7 +49,15 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    if (!supabase) {
+      return NextResponse.json(
+        { error: 'Supabase is not configured' },
+        { status: 500 }
+      );
+    }
+
     const body = await request.json();
+
     const { data, error } = await supabase
       .from('odds')
       .insert([body])
@@ -51,6 +70,9 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ odds: data }, { status: 201 });
   } catch {
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }
