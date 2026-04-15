@@ -139,6 +139,3 @@ export default function PicksPage() {
     </div>
   );
 }
-    </div>
-  );
-}
