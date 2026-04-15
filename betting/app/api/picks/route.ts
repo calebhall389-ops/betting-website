@@ -1,13 +1,22 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
-import { mockPicks } from '@/lib/mock-data';
+import { createClient } from '@supabase/supabase-js';
+
+export const dynamic = 'force-dynamic';
+
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anon) {
+    throw new Error('Missing Supabase public environment variables');
+  }
+
+  return createClient(url, anon);
+}
 
 export async function GET() {
   try {
-    // If Supabase isn't configured, return mock data
-    if (!supabase) {
-      return NextResponse.json({ picks: mockPicks });
-    }
+    const supabase = getSupabase();
 
     const { data, error } = await supabase
       .from('picks')
@@ -15,28 +24,29 @@ export async function GET() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Supabase error:', error.message);
-      return NextResponse.json({ picks: mockPicks });
+      return NextResponse.json(
+        { error: error.message, picks: [] },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
-      picks: data && data.length > 0 ? data : mockPicks,
+      picks: data ?? [],
     });
   } catch (error) {
-    console.error('API error:', error);
-    return NextResponse.json({ picks: mockPicks });
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        picks: [],
+      },
+      { status: 500 }
+    );
   }
 }
 
 export async function POST(request: Request) {
   try {
-    if (!supabase) {
-      return NextResponse.json(
-        { error: 'Supabase is not configured' },
-        { status: 500 }
-      );
-    }
-
+    const supabase = getSupabase();
     const body = await request.json();
 
     const { data, error } = await supabase
@@ -54,9 +64,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ pick: data }, { status: 201 });
   } catch (error) {
-    console.error('POST error:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      {
+        error: error instanceof Error ? error.message : 'Internal server error',
+      },
       { status: 500 }
     );
   }
