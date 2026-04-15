@@ -18,6 +18,8 @@ type PickRow = {
   stake: number;
   result: string;
   profit: number | null;
+  clv: number | null;
+  closing_odds: number | null;
 };
 
 function getSupabase() {
@@ -43,6 +45,11 @@ function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
 }
 
+function formatClv(value: number | null) {
+  if (value === null) return '-';
+  return value > 0 ? `+${value.toFixed(1)}` : value.toFixed(1);
+}
+
 function getResultBadge(result: string) {
   switch (result) {
     case 'win':
@@ -65,13 +72,20 @@ function getProfitColor(value: number | null) {
   return 'text-gray-600';
 }
 
+function getClvColor(value: number | null) {
+  if (value === null) return 'text-gray-500';
+  if (value > 0) return 'text-green-600 font-semibold';
+  if (value < 0) return 'text-red-600 font-semibold';
+  return 'text-gray-600';
+}
+
 export default async function ResultsPage() {
   const supabase = getSupabase();
 
   const { data, error } = await supabase
     .from('picks')
     .select(
-      'id,created_at,sport,game,pick,odds,confidence,stake,result,profit'
+      'id,created_at,sport,game,pick,odds,confidence,stake,result,profit,clv,closing_odds'
     )
     .order('created_at', { ascending: false })
     .limit(250);
@@ -110,6 +124,14 @@ export default async function ResultsPage() {
     (sum, pick) => sum + Number(pick.profit ?? 0),
     0
   );
+
+  const clvPicks = picks.filter((pick) => pick.clv !== null);
+
+  const avgClv =
+    clvPicks.length > 0
+      ? clvPicks.reduce((sum, pick) => sum + Number(pick.clv ?? 0), 0) /
+        clvPicks.length
+      : 0;
 
   const totalBets = graded.length;
   const winRate = totalBets > 0 ? (wins / totalBets) * 100 : 0;
@@ -168,11 +190,11 @@ export default async function ResultsPage() {
       <div>
         <h1 className="text-3xl font-bold">Results Dashboard</h1>
         <p className="text-gray-500 mt-1">
-          Track wins, losses, profit, ROI, and performance trends.
+          Track wins, losses, profit, ROI, bankroll, and CLV.
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-8">
+      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-9">
         <div className="rounded-2xl border p-4 shadow-sm">
           <p className="text-sm text-gray-500">Graded Bets</p>
           <p className="text-2xl font-bold">{totalBets}</p>
@@ -201,6 +223,13 @@ export default async function ResultsPage() {
         <div className="rounded-2xl border p-4 shadow-sm">
           <p className="text-sm text-gray-500">ROI</p>
           <p className="text-2xl font-bold">{formatPercent(roi)}</p>
+        </div>
+
+        <div className="rounded-2xl border p-4 shadow-sm">
+          <p className="text-sm text-gray-500">Avg CLV</p>
+          <p className={`text-2xl font-bold ${getClvColor(avgClv)}`}>
+            {formatClv(avgClv)}
+          </p>
         </div>
 
         <div className="rounded-2xl border p-4 shadow-sm">
@@ -248,15 +277,17 @@ export default async function ResultsPage() {
                 <th className="p-3">Game</th>
                 <th className="p-3">Pick</th>
                 <th className="p-3">Odds</th>
+                <th className="p-3">Closing Odds</th>
                 <th className="p-3">Stake</th>
                 <th className="p-3">Result</th>
                 <th className="p-3">Profit</th>
+                <th className="p-3">CLV</th>
               </tr>
             </thead>
             <tbody>
               {picks.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-4 text-center text-gray-500">
+                  <td colSpan={10} className="p-4 text-center text-gray-500">
                     No picks found yet.
                   </td>
                 </tr>
@@ -271,6 +302,13 @@ export default async function ResultsPage() {
                     <td className="p-3">{pick.pick}</td>
                     <td className="p-3">
                       {pick.odds > 0 ? `+${pick.odds}` : pick.odds}
+                    </td>
+                    <td className="p-3">
+                      {pick.closing_odds === null
+                        ? '-'
+                        : pick.closing_odds > 0
+                        ? `+${pick.closing_odds}`
+                        : pick.closing_odds}
                     </td>
                     <td className="p-3">
                       {formatMoney(Number(pick.stake ?? 0))}
@@ -288,6 +326,9 @@ export default async function ResultsPage() {
                       {pick.profit === null
                         ? '-'
                         : formatMoney(Number(pick.profit))}
+                    </td>
+                    <td className={`p-3 ${getClvColor(pick.clv)}`}>
+                      {formatClv(pick.clv)}
                     </td>
                   </tr>
                 ))
