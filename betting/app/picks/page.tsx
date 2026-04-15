@@ -1,141 +1,149 @@
-'use client';
+import { createClient } from '@supabase/supabase-js';
 
-import { useEffect, useMemo, useState } from 'react';
-import PickCard from '@/components/pick-card';
-import { mockPicks } from '@/lib/mock-data';
-import { computeStats, cn } from '@/lib/utils';
-import { Sport, BetType, PickResult, Pick } from '@/lib/types';
+export const dynamic = 'force-dynamic';
 
-const SPORTS: (Sport | 'All')[] = ['All', 'NFL', 'NBA', 'MLB', 'NHL', 'NCAAF', 'NCAAB'];
-const BET_TYPES: (BetType | 'All')[] = ['All', 'spread', 'moneyline', 'over/under', 'prop', 'parlay'];
-const RESULTS: (PickResult | 'All')[] = ['All', 'pending', 'win', 'loss', 'push'];
+type PickRow = {
+  id: string;
+  created_at: string;
+  sport: string;
+  game: string;
+  pick: string;
+  odds: number;
+  confidence: string | number;
+  stake: number;
+  result: string;
+  analysis?: string | null;
+};
 
-export default function PicksPage() {
-  const [picks, setPicks] = useState<Pick[]>(mockPicks);
-  const [loading, setLoading] = useState(true);
-  const [sport, setSport] = useState<'All' | Sport>('All');
-  const [betType, setBetType] = useState<'All' | BetType>('All');
-  const [result, setResult] = useState<'All' | PickResult>('All');
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  useEffect(() => {
-    const loadPicks = async () => {
-      try {
-        const res = await fetch('/api/picks', { cache: 'no-store' });
-        if (!res.ok) throw new Error('Failed to fetch picks');
+  if (!url || !anon) {
+    throw new Error('Missing Supabase public environment variables');
+  }
 
-        const data = await res.json();
-        if (Array.isArray(data.picks) && data.picks.length > 0) {
-          setPicks(data.picks);
-        } else {
-          setPicks(mockPicks);
-        }
-      } catch {
-        setPicks(mockPicks);
-      } finally {
-        setLoading(false);
-      }
-    };
+  return createClient(url, anon);
+}
 
-    loadPicks();
-  }, []);
+function formatOdds(odds: number) {
+  return odds > 0 ? `+${odds}` : `${odds}`;
+}
 
-  const filtered = useMemo(() => {
-    return picks.filter((p) => {
-      if (sport !== 'All' && p.sport !== sport) return false;
-      if (betType !== 'All' && p.bet_type !== betType) return false;
-      if (result !== 'All' && p.result !== result) return false;
-      return true;
-    });
-  }, [picks, sport, betType, result]);
+function getResultBadge(result: string) {
+  switch (result) {
+    case 'win':
+      return 'bg-green-100 text-green-700';
+    case 'loss':
+      return 'bg-red-100 text-red-700';
+    case 'push':
+      return 'bg-gray-200 text-gray-700';
+    case 'pending':
+      return 'bg-yellow-100 text-yellow-700';
+    default:
+      return 'bg-gray-100 text-gray-600';
+  }
+}
 
-  const stats = useMemo(() => computeStats(picks), [picks]);
+function renderConfidence(confidence: string | number) {
+  const value = Number(confidence);
+
+  if (!Number.isNaN(value)) {
+    return `${value}/5`;
+  }
+
+  return String(confidence);
+}
+
+function formatStake(stake: number) {
+  return `${stake}u`;
+}
+
+export default async function PicksPage() {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from('picks')
+    .select('id,created_at,sport,game,pick,odds,confidence,stake,result,analysis')
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (error) {
+    return (
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        <h1 className="text-2xl font-bold text-white">Picks</h1>
+        <p className="mt-3 text-red-400">Error loading picks: {error.message}</p>
+      </main>
+    );
+  }
+
+  const picks = (data ?? []) as PickRow[];
+
+  const wins = picks.filter((pick) => pick.result === 'win').length;
+  const losses = picks.filter((pick) => pick.result === 'loss').length;
+  const graded = wins + losses;
+  const winRate = graded > 0 ? ((wins / graded) * 100).toFixed(1) : '0.0';
 
   return (
-    <div className="space-y-8">
-      <div>
+    <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mb-8">
         <h1 className="text-3xl font-bold text-white">Expert Picks</h1>
-        <p className="mt-2 text-slate-400">
-          {stats.wins}W - {stats.losses}L · {stats.winRate.toFixed(1)}% Win Rate ·
-          {stats.totalProfit > 0 ? ' +' : ' '}
-          {stats.totalProfit.toFixed(1)}u Profit
+        <p className="mt-2 text-sm text-slate-400">
+          {wins} W - {losses} L · {winRate}% Win Rate · Live picks from your database
         </p>
       </div>
 
-      <div className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
-        <div>
-          <p className="mb-2 text-sm font-medium text-slate-300">Sport:</p>
-          <div className="flex flex-wrap gap-2">
-            {SPORTS.map((s) => (
-              <button
-                key={s}
-                onClick={() => setSport(s)}
-                className={cn(
-                  'rounded-lg px-3 py-1.5 text-xs font-medium transition-all',
-                  sport === s
-                    ? 'border border-emerald-500/30 bg-emerald-500/20 text-emerald-400'
-                    : 'border border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
-                )}
-              >
-                {s}
-              </button>
-            ))}
+      <div className="grid gap-4">
+        {picks.length === 0 ? (
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-400">
+            No picks found yet.
           </div>
-        </div>
+        ) : (
+          picks.map((pick) => (
+            <div
+              key={pick.id}
+              className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-sm"
+            >
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-300">
+                  {pick.sport}
+                </span>
+                <span
+                  className={`rounded-md px-2 py-1 text-xs font-semibold capitalize ${getResultBadge(
+                    pick.result
+                  )}`}
+                >
+                  {pick.result}
+                </span>
+              </div>
 
-        <div>
-          <p className="mb-2 text-sm font-medium text-slate-300">Type:</p>
-          <div className="flex flex-wrap gap-2">
-            {BET_TYPES.map((t) => (
-              <button
-                key={t}
-                onClick={() => setBetType(t)}
-                className={cn(
-                  'rounded-lg px-3 py-1.5 text-xs font-medium capitalize transition-all',
-                  betType === t
-                    ? 'border border-emerald-500/30 bg-emerald-500/20 text-emerald-400'
-                    : 'border border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
-                )}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        </div>
+              <p className="text-sm text-slate-400">{pick.game}</p>
+              <h2 className="mt-1 text-xl font-bold text-white">{pick.pick}</h2>
 
-        <div>
-          <p className="mb-2 text-sm font-medium text-slate-300">Result:</p>
-          <div className="flex flex-wrap gap-2">
-            {RESULTS.map((r) => (
-              <button
-                key={r}
-                onClick={() => setResult(r)}
-                className={cn(
-                  'rounded-lg px-3 py-1.5 text-xs font-medium capitalize transition-all',
-                  result === r
-                    ? 'border border-emerald-500/30 bg-emerald-500/20 text-emerald-400'
-                    : 'border border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
-                )}
-              >
-                {r}
-              </button>
-            ))}
-          </div>
-        </div>
+              <div className="mt-3 flex flex-wrap gap-4 text-sm">
+                <span className="text-emerald-400 font-semibold">
+                  {formatOdds(Number(pick.odds))}
+                </span>
+                <span className="text-slate-300">
+                  Confidence: {renderConfidence(pick.confidence)}
+                </span>
+                <span className="text-slate-300">
+                  Stake: {formatStake(Number(pick.stake))}
+                </span>
+                <span className="text-slate-500">
+                  {new Date(pick.created_at).toLocaleDateString()}
+                </span>
+              </div>
+
+              {pick.analysis ? (
+                <p className="mt-4 text-sm leading-6 text-slate-300">
+                  {pick.analysis}
+                </p>
+              ) : null}
+            </div>
+          ))
+        )}
       </div>
-
-      {loading ? (
-        <div className="text-slate-400">Loading picks...</div>
-      ) : filtered.length === 0 ? (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-8 text-center text-slate-400">
-          No picks match your filters.
-        </div>
-      ) : (
-        <div className="grid gap-6 md:grid-cols-2">
-          {filtered.map((pick) => (
-            <PickCard key={pick.id} pick={pick} />
-          ))}
-        </div>
-      )}
-    </div>
+    </main>
   );
 }
