@@ -75,8 +75,10 @@ const MAX_PICKS = 25;
 const BANKROLL = Number(process.env.BANKROLL ?? 1000);
 
 function confidenceFromEV(ev: number): number {
-  if (ev >= 0.07) return 3;
-  if (ev >= 0.04) return 2;
+  if (ev >= 0.12) return 5;
+  if (ev >= 0.08) return 4;
+  if (ev >= 0.05) return 3;
+  if (ev >= 0.02) return 2;
   return 1;
 }
 
