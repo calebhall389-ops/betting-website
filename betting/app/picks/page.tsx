@@ -60,15 +60,15 @@ export default async function PicksPage() {
   const { data, error } = await supabase
     .from('picks')
     .select(
-      'id,created_at,sport,game,pick,odds,confidence,stake,result,analysis'
+      'id, created_at, sport, game, pick, odds, confidence, stake, result, analysis'
     )
     .order('created_at', { ascending: false })
     .limit(100);
 
   if (error) {
     return (
-      <main className="mx-auto max-w-7xl px-4 py-8 text-white">
-        <h1 className="text-2xl font-bold">Picks</h1>
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        <h1 className="text-2xl font-bold text-white">Expert Picks</h1>
         <p className="mt-3 text-red-400">
           Error loading picks: {error.message}
         </p>
@@ -78,24 +78,23 @@ export default async function PicksPage() {
 
   const picks = (data ?? []) as PickRow[];
 
-  const wins = picks.filter((p) => p.result === 'win').length;
-  const losses = picks.filter((p) => p.result === 'loss').length;
+  const wins = picks.filter((pick) => pick.result === 'win').length;
+  const losses = picks.filter((pick) => pick.result === 'loss').length;
   const graded = wins + losses;
   const winRate = graded > 0 ? ((wins / graded) * 100).toFixed(1) : '0.0';
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      {/* Header */}
       <div className="mb-8">
-        {/* Deployment Test Heading */}
-        <h1 className="text-3xl font-bold text-white">
-          PICKS PAGE TEST 123
-        </h1>
+        <h1 className="text-3xl font-bold text-white">Expert Picks</h1>
         <p className="mt-2 text-sm text-slate-400">
           {wins} W - {losses} L · {winRate}% Win Rate · Live picks from your
           database
         </p>
       </div>
 
+      {/* Picks Grid */}
       <div className="grid gap-4">
         {picks.length === 0 ? (
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-400">
@@ -107,10 +106,12 @@ export default async function PicksPage() {
               key={pick.id}
               className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-sm"
             >
+              {/* Sport and Result */}
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <span className="rounded-md bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-300">
                   {pick.sport}
                 </span>
+
                 <span
                   className={`rounded-md px-2 py-1 text-xs font-semibold capitalize ${getResultBadge(
                     pick.result
@@ -120,26 +121,32 @@ export default async function PicksPage() {
                 </span>
               </div>
 
+              {/* Game and Pick */}
               <p className="text-sm text-slate-400">{pick.game}</p>
               <h2 className="mt-1 text-xl font-bold text-white">
                 {pick.pick}
               </h2>
 
+              {/* Pick Details */}
               <div className="mt-3 flex flex-wrap gap-4 text-sm">
                 <span className="font-semibold text-emerald-400">
                   {formatOdds(Number(pick.odds))}
                 </span>
+
                 <span className="text-slate-300">
                   Confidence: {renderConfidence(pick.confidence)}
                 </span>
+
                 <span className="text-slate-300">
                   Stake: {formatStake(Number(pick.stake))}
                 </span>
+
                 <span className="text-slate-500">
                   {new Date(pick.created_at).toLocaleDateString()}
                 </span>
               </div>
 
+              {/* Analysis */}
               {pick.analysis && (
                 <p className="mt-4 text-sm leading-6 text-slate-300">
                   {pick.analysis}
