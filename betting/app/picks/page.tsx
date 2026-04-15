@@ -108,6 +108,7 @@ export default async function PicksPage() {
                 <span className="rounded-md bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-300">
                   {pick.sport}
                 </span>
+
                 <span
                   className={`rounded-md px-2 py-1 text-xs font-semibold capitalize ${getResultBadge(
                     pick.result
@@ -121,15 +122,18 @@ export default async function PicksPage() {
               <h2 className="mt-1 text-xl font-bold text-white">{pick.pick}</h2>
 
               <div className="mt-3 flex flex-wrap gap-4 text-sm">
-                <span className="text-emerald-400 font-semibold">
+                <span className="font-semibold text-emerald-400">
                   {formatOdds(Number(pick.odds))}
                 </span>
+
                 <span className="text-slate-300">
                   Confidence: {renderConfidence(pick.confidence)}
                 </span>
+
                 <span className="text-slate-300">
                   Stake: {formatStake(Number(pick.stake))}
                 </span>
+
                 <span className="text-slate-500">
                   {new Date(pick.created_at).toLocaleDateString()}
                 </span>
