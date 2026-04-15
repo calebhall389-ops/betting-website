@@ -99,10 +99,7 @@ export async function GET(request: NextRequest) {
       .gte('created_at', startOfUtcDay);
 
     if (existingError) {
-      return NextResponse.json(
-        { error: existingError.message },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: existingError.message }, { status: 500 });
     }
 
     const existingSet = new Set(
@@ -119,13 +116,10 @@ export async function GET(request: NextRequest) {
       stake: number;
       result: string;
       edge: number;
-      ev: number;
-      commence_time: string;
     }> = [];
 
     for (const event of events) {
       const game = `${event.away_team} at ${event.home_team}`;
-
       const allTeamPrices = new Map<string, number[]>();
 
       for (const bookmaker of event.bookmakers ?? []) {
@@ -180,8 +174,6 @@ export async function GET(request: NextRequest) {
             stake: 1,
             result: 'pending',
             edge,
-            ev,
-            commence_time: event.commence_time,
           });
         }
       }
@@ -199,7 +191,7 @@ export async function GET(request: NextRequest) {
     const finalPicks = Array.from(bestByGame.values())
       .sort((a, b) => b.edge - a.edge)
       .slice(0, 5)
-      .map(({ edge, ev, commence_time, ...row }) => row);
+      .map(({ edge, ...row }) => row);
 
     if (finalPicks.length === 0) {
       return NextResponse.json({
@@ -215,10 +207,7 @@ export async function GET(request: NextRequest) {
       .select();
 
     if (insertError) {
-      return NextResponse.json(
-        { error: insertError.message },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
 
     return NextResponse.json({
@@ -228,9 +217,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      },
+      { error: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }
