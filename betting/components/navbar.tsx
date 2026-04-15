@@ -2,7 +2,16 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { TrendingUp, BarChart2, Target, ListChecks, Settings, Menu, X } from 'lucide-react';
+import {
+  TrendingUp,
+  BarChart2,
+  Target,
+  ListChecks,
+  Settings,
+  Menu,
+  X,
+  LineChart,
+} from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -11,6 +20,7 @@ const navLinks = [
   { href: '/props', label: 'Props', icon: TrendingUp },
   { href: '/odds', label: 'Odds', icon: BarChart2 },
   { href: '/tracker', label: 'Tracker', icon: ListChecks },
+  { href: '/results', label: 'Results', icon: LineChart },
   { href: '/admin', label: 'Admin', icon: Settings },
 ];
 
