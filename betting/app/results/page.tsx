@@ -123,14 +123,27 @@ export default async function ResultsPage() {
     dailyMap.set(date, (dailyMap.get(date) ?? 0) + Number(pick.profit ?? 0));
   }
 
-  let runningProfit = 0;
-  const profitData = Array.from(dailyMap.entries()).map(([date, profit]) => {
-    runningProfit += profit;
+  const STARTING_BANKROLL = Number(process.env.NEXT_PUBLIC_BANKROLL ?? 1000);
+
+let runningBankroll = STARTING_BANKROLL;
+
+const bankrollData = Array.from(dailyMap.entries())
+  .sort(([a], [b]) => {
+    const [aMonth, aDay] = a.split('/').map(Number);
+    const [bMonth, bDay] = b.split('/').map(Number);
+
+    return (
+      new Date(2026, aMonth - 1, aDay).getTime() -
+      new Date(2026, bMonth - 1, bDay).getTime()
+    );
+  })
+  .map(([date, profit]) => {
+    runningBankroll += profit;
 
     return {
       date,
       profit: Number(profit.toFixed(2)),
-      cumulativeProfit: Number(runningProfit.toFixed(2)),
+      bankroll: Number(runningBankroll.toFixed(2)),
     };
   });
 
