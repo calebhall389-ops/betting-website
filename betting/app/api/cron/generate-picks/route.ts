@@ -153,7 +153,7 @@ export async function GET(request: NextRequest) {
           const edge = consensusProbability - bookProbability;
           const ev = expectedValue(consensusProbability, outcome.price, 1);
 
-          if (edge < 0.025 || ev < 0.02) continue;
+          if (edge < 0.01 || ev < 0.005) continue;
 
           const pick = `${outcome.name} ML`;
           const dedupeKey = `${game}__${pick}`;
