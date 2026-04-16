@@ -1,55 +1,31 @@
 import { NextResponse } from 'next/server';
+import { fetchLeagueEvents } from '@/lib/sportsgameodds';
 
 export const dynamic = 'force-dynamic';
 
-const API_KEY = process.env.SPORTSGAMEODDS_API_KEY!;
-const BASE_URL =
-  process.env.SPORTSGAMEODDS_BASE_URL ||
-  'https://api.sportsgameodds.com/v2';
-
-// Supported leagues (adjust based on your subscription)
 const LEAGUES = ['MLB', 'NBA', 'NFL', 'NHL'];
-
-async function fetchLeagueOdds(league: string) {
-  const url = `${BASE_URL}/events?league=${league}&includeOdds=true`;
-
-  const res = await fetch(url, {
-    headers: {
-      'x-api-key': API_KEY,
-    },
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`SportsGameOdds error (${league}): ${text}`);
-  }
-
-  return res.json();
-}
 
 export async function GET() {
   try {
-    if (!API_KEY) {
+    if (!process.env.SPORTSGAMEODDS_API_KEY) {
       throw new Error('Missing SPORTSGAMEODDS_API_KEY');
     }
 
     const results = await Promise.all(
-      LEAGUES.map(async (league) => {
+      LEAGUES.map(async (leagueID) => {
         try {
-          const data = await fetchLeagueOdds(league);
+          const response = await fetchLeagueEvents(leagueID);
+
           return {
-            league,
-            events: data?.data || data || [],
+            league: leagueID,
+            events: response?.data || response || [],
           };
         } catch (error) {
           return {
-            league,
+            league: leagueID,
             events: [],
             error:
-              error instanceof Error
-                ? error.message
-                : 'Failed to fetch odds',
+              error instanceof Error ? error.message : 'Failed to fetch league',
           };
         }
       })
@@ -71,9 +47,7 @@ export async function GET() {
       {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to fetch odds',
+          error instanceof Error ? error.message : 'Unknown error occurred',
       },
       { status: 500 }
     );
