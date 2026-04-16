@@ -17,6 +17,7 @@ type Pick = {
   edge?: number | null;
   ev?: number | null;
   analysis?: string | null;
+  max_play?: boolean | null;
 };
 
 export default function PicksPage() {
@@ -169,7 +170,7 @@ export default function PicksPage() {
     }
 
     if (sharpOnly) {
-      result = result.filter((pick) => isSharpPick(pick));
+      result = result.filter((pick) => isSharpPick(pick) || pick.max_play);
     }
 
     result = [...result].sort((a, b) => {
@@ -306,11 +307,16 @@ export default function PicksPage() {
 
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-2xl font-bold">{pick.pick}</h2>
-                      {isSharpPick(pick) && (
+
+                      {pick.max_play ? (
+                        <span className="rounded-full bg-red-500/20 px-3 py-1 text-xs font-semibold text-red-300">
+                          💎 Max Play
+                        </span>
+                      ) : isSharpPick(pick) ? (
                         <span className="rounded-full bg-green-500/20 px-3 py-1 text-xs font-semibold text-green-300">
                           🔥 Sharp Pick
                         </span>
-                      )}
+                      ) : null}
                     </div>
 
                     <p className="mt-1 text-lg text-gray-300">{pick.game}</p>
