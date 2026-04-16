@@ -117,16 +117,14 @@ function getSharpConsensus(game: OddsGame) {
 }
 
 function findBestLine(game: OddsGame) {
-  let bestPick:
-    | {
-        side: string;
-        book: string;
-        odds: number;
-        winProb: number;
-        ev: number;
-      }
-    | null = null;
-
+  bestPick = {
+  side: outcome.name,
+  book: book.title,
+  bookKey: book.key,
+  odds: outcome.price,
+  winProb,
+  ev,
+};
   const consensus = getSharpConsensus(game);
   if (!consensus) return null;
 
@@ -264,19 +262,19 @@ export async function GET(req: NextRequest) {
         if (existing) continue;
 
         const row = {
-          sport: game.sport_title,
-          game: gameLabel,
-          pick: pickText,
-          odds: best.odds,
-          sportsbook: best.book,
-          stake,
-          to_win: toWin,
-          status: 'pending',
-          ev: Number((best.ev * 100).toFixed(2)),
-          model_prob: Number((best.winProb * 100).toFixed(2)),
-          commence_time: game.commence_time,
-        };
-
+  sport: game.sport_title,
+  game: gameLabel,
+  pick: pickText,
+  odds: best.odds,
+  sportsbook: best.book,        // Display name (e.g., DraftKings)
+  sportsbook_key: best.bookKey, // Internal key (e.g., draftkings)
+  stake,
+  to_win: toWin,
+  status: 'pending',
+  ev: Number((best.ev * 100).toFixed(2)),
+  model_prob: Number((best.winProb * 100).toFixed(2)),
+  commence_time: game.commence_time,
+};
         const { data, error } = await supabase
           .from('picks')
           .insert(row)
