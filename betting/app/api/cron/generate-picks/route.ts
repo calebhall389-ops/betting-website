@@ -44,6 +44,7 @@ type CandidatePick = {
   modelProbability: number;
   marketProbability: number;
   commenceTime?: string;
+  isMaxPlay: boolean;
 };
 
 function getSupabase() {
@@ -164,6 +165,9 @@ function buildCandidatesFromEvents(
     minBooks: number;
     bankroll: number;
     kellyFraction: number;
+    maxPlayEdge: number;
+    maxPlayEv: number;
+    maxPlayConfidence: number;
   }
 ): CandidatePick[] {
   const candidates: CandidatePick[] = [];
@@ -235,8 +239,15 @@ function buildCandidatesFromEvents(
         settings.kellyFraction
       );
 
+      const isMaxPlay =
+        edge >= settings.maxPlayEdge &&
+        ev >= settings.maxPlayEv &&
+        confidence >= settings.maxPlayConfidence;
+
       const analysis = [
-        `${displayTeam} moneyline shows value versus the consensus market.`,
+        isMaxPlay
+          ? `${displayTeam} moneyline qualifies as a Max Play based on elite EV, edge, and confidence thresholds.`
+          : `${displayTeam} moneyline shows value versus the consensus market.`,
         `Best price found: ${data.bestPrice > 0 ? `+${data.bestPrice}` : data.bestPrice} at ${data.bestBookmaker}.`,
         `Model win probability: ${(consensusProb * 100).toFixed(2)}%.`,
         `Market implied probability: ${(bookProb * 100).toFixed(2)}%.`,
@@ -258,6 +269,7 @@ function buildCandidatesFromEvents(
         modelProbability: consensusProb,
         marketProbability: bookProb,
         commenceTime: event.commence_time,
+        isMaxPlay,
       });
     });
   }
@@ -279,7 +291,7 @@ export async function GET(req: NextRequest) {
 
     const supabase = getSupabase();
 
-    // Medium-sharp settings
+    // Looser baseline thresholds for more volume
     const MIN_EDGE = Number(process.env.MIN_EDGE ?? 0.01);
     const MIN_EV = Number(process.env.MIN_EV ?? 0.015);
     const MIN_CONFIDENCE = Number(process.env.MIN_CONFIDENCE ?? 0.6);
@@ -287,6 +299,13 @@ export async function GET(req: NextRequest) {
     const MAX_PICKS = Number(process.env.MAX_PICKS ?? 5);
     const BANKROLL = Number(process.env.BANKROLL ?? 1000);
     const KELLY_FRACTION = Number(process.env.KELLY_FRACTION ?? 0.25);
+
+    // Stronger thresholds for Max Play badge
+    const MAX_PLAY_EDGE = Number(process.env.MAX_PLAY_EDGE ?? 0.025);
+    const MAX_PLAY_EV = Number(process.env.MAX_PLAY_EV ?? 0.05);
+    const MAX_PLAY_CONFIDENCE = Number(
+      process.env.MAX_PLAY_CONFIDENCE ?? 0.66
+    );
 
     const ALLOWED_BOOKMAKERS = (
       process.env.ALLOWED_BOOKMAKERS ??
@@ -319,10 +338,14 @@ export async function GET(req: NextRequest) {
       minBooks: MIN_BOOKS,
       bankroll: BANKROLL,
       kellyFraction: KELLY_FRACTION,
+      maxPlayEdge: MAX_PLAY_EDGE,
+      maxPlayEv: MAX_PLAY_EV,
+      maxPlayConfidence: MAX_PLAY_CONFIDENCE,
     });
 
     const sorted = candidates
       .sort((a, b) => {
+        if (b.isMaxPlay !== a.isMaxPlay) return Number(b.isMaxPlay) - Number(a.isMaxPlay);
         if (b.ev !== a.ev) return b.ev - a.ev;
         if (b.edge !== a.edge) return b.edge - a.edge;
         return b.confidence - a.confidence;
@@ -342,12 +365,16 @@ export async function GET(req: NextRequest) {
           MAX_PICKS,
           BANKROLL,
           KELLY_FRACTION,
+          MAX_PLAY_EDGE,
+          MAX_PLAY_EV,
+          MAX_PLAY_CONFIDENCE,
           ALLOWED_BOOKMAKERS,
           SPORT_KEYS,
         },
         debug: {
           eventsChecked: allEvents.length,
           candidatesFoundBeforeLimits: candidates.length,
+          maxPlayCandidates: candidates.filter((c) => c.isMaxPlay).length,
         },
       });
     }
@@ -390,6 +417,7 @@ export async function GET(req: NextRequest) {
         market_probability: Number((pick.marketProbability * 100).toFixed(2)),
         model_prob: Number((pick.modelProbability * 100).toFixed(2)),
         commence_time: pick.commenceTime ?? null,
+        max_play: pick.isMaxPlay,
         to_win: Number(
           ((americanToDecimal(pick.odds) - 1) * pick.stake).toFixed(2)
         ),
@@ -412,6 +440,7 @@ export async function GET(req: NextRequest) {
           bookmaker: p.bookmaker,
           model_probability: Number((p.modelProbability * 100).toFixed(2)),
           market_probability: Number((p.marketProbability * 100).toFixed(2)),
+          max_play: p.isMaxPlay,
         })),
         settings: {
           MIN_EDGE,
@@ -419,10 +448,16 @@ export async function GET(req: NextRequest) {
           MIN_CONFIDENCE,
           MIN_BOOKS,
           MAX_PICKS,
+          BANKROLL,
+          KELLY_FRACTION,
+          MAX_PLAY_EDGE,
+          MAX_PLAY_EV,
+          MAX_PLAY_CONFIDENCE,
         },
         debug: {
           eventsChecked: allEvents.length,
           candidatesFoundBeforeLimits: candidates.length,
+          maxPlayCandidates: candidates.filter((c) => c.isMaxPlay).length,
         },
       });
     }
@@ -454,6 +489,7 @@ export async function GET(req: NextRequest) {
         bookmaker: p.bookmaker,
         model_probability: Number((p.modelProbability * 100).toFixed(2)),
         market_probability: Number((p.marketProbability * 100).toFixed(2)),
+        max_play: p.isMaxPlay,
       })),
       settings: {
         MIN_EDGE,
@@ -463,6 +499,9 @@ export async function GET(req: NextRequest) {
         MAX_PICKS,
         BANKROLL,
         KELLY_FRACTION,
+        MAX_PLAY_EDGE,
+        MAX_PLAY_EV,
+        MAX_PLAY_CONFIDENCE,
         ALLOWED_BOOKMAKERS,
         SPORT_KEYS,
       },
@@ -470,6 +509,7 @@ export async function GET(req: NextRequest) {
         eventsChecked: allEvents.length,
         candidatesFoundBeforeLimits: candidates.length,
         rowsInserted: insertedRows?.length ?? 0,
+        maxPlayCandidates: candidates.filter((c) => c.isMaxPlay).length,
       },
     });
   } catch (error) {
