@@ -11,11 +11,6 @@ export const dynamic = 'force-dynamic';
 
 const MAJOR_BOOK_SET = new Set(MAJOR_BOOKMAKERS);
 const MAJOR_SPORTS_SET = new Set(ALLOWED_SPORT_KEYS);
-
-export const dynamic = 'force-dynamic';
-
-const MAJOR_BOOK_SET = new Set(MAJOR_BOOKMAKERS);
-const MAJOR_SPORTS_SET = new Set(ALLOWED_SPORT_KEYS);
 export const dynamic = 'force-dynamic';
 
 type OddsOutcome = {
