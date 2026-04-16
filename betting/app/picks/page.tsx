@@ -1,6 +1,6 @@
-'use client';
+import { createClient } from '@supabase/supabase-js';
 
-import { useEffect, useState } from 'react';
+export const dynamic = 'force-dynamic';
 
 type Pick = {
   id?: string;
@@ -20,49 +20,50 @@ type Pick = {
   market_probability?: number | null;
 };
 
-export default function PicksPage() {
-  const [picks, setPicks] = useState<Pick[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+function getSupabase() {
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  useEffect(() => {
-    async function loadPicks() {
-      try {
-        setLoading(true);
-        setError(null);
+  if (!url || !serviceRoleKey) {
+    throw new Error(
+      'Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY'
+    );
+  }
 
-        const res = await fetch('/api/picks', {
-          cache: 'no-store',
-        });
+  return createClient(url, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
 
-        const json = await res.json();
+export default async function PicksPage() {
+  let picks: Pick[] = [];
+  let error: string | null = null;
 
-        if (!res.ok) {
-          throw new Error(json?.error || 'Failed to load picks');
-        }
+  try {
+    const supabase = getSupabase();
 
-        setPicks(Array.isArray(json?.picks) ? json.picks : []);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Something went wrong');
-        setPicks([]);
-      } finally {
-        setLoading(false);
-      }
+    const { data, error: supabaseError } = await supabase
+      .from('picks')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (supabaseError) {
+      throw new Error(supabaseError.message);
     }
 
-    loadPicks();
-  }, []);
+    picks = Array.isArray(data) ? data : [];
+  } catch (err) {
+    error = err instanceof Error ? err.message : 'Something went wrong';
+  }
 
   return (
     <main className="min-h-screen bg-black text-white p-6">
       <div className="mx-auto max-w-5xl">
         <h1 className="text-3xl font-bold mb-6">Picks</h1>
-
-        {loading && (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            Loading picks...
-          </div>
-        )}
 
         {error && (
           <div className="rounded-xl border border-red-800 bg-red-950 p-4 text-red-200">
@@ -70,7 +71,7 @@ export default function PicksPage() {
           </div>
         )}
 
-        {!loading && !error && picks.length === 0 && (
+        {!error && picks.length === 0 && (
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
             No picks found.
           </div>
