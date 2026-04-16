@@ -1,27 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { fetchAvailableSports, fetchOddsForSport } from '@/lib/odds-api';
+import { MAJOR_BOOK_SET, MAJOR_SPORTS_SET } from '@/lib/sportsbooks';
 
 export const dynamic = 'force-dynamic';
-
-const MAJOR_SPORTS = new Set([
-  'baseball_mlb',
-  'basketball_nba',
-  'americanfootball_nfl',
-  'icehockey_nhl',
-  'basketball_ncaab',
-  'americanfootball_ncaaf',
-]);
-
-const MAJOR_BOOKS = new Set([
-  'draftkings',
-  'fanduel',
-  'betmgm',
-  'caesars',
-  'espnbet',
-  'betrivers',
-  'hardrockbet',
-]);
 
 type OddsOutcome = {
   name: string;
@@ -50,16 +32,12 @@ type OddsGame = {
 };
 
 function americanToImpliedProbability(odds: number): number {
-  if (odds > 0) {
-    return 100 / (odds + 100);
-  }
+  if (odds > 0) return 100 / (odds + 100);
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
 function decimalFromAmerican(odds: number): number {
-  if (odds > 0) {
-    return 1 + odds / 100;
-  }
+  if (odds > 0) return 1 + odds / 100;
   return 1 + 100 / Math.abs(odds);
 }
 
@@ -70,9 +48,8 @@ function average(nums: number[]): number {
 
 function normalizeProbabilities(probA: number, probB: number) {
   const total = probA + probB;
-  if (total <= 0) {
-    return { a: 0.5, b: 0.5 };
-  }
+  if (total <= 0) return { a: 0.5, b: 0.5 };
+
   return {
     a: probA / total,
     b: probB / total,
@@ -86,7 +63,7 @@ function calcEV(winProb: number, americanOdds: number): number {
 
 function getSharpConsensus(game: OddsGame) {
   const majorBooks = (game.bookmakers || []).filter((book) =>
-    MAJOR_BOOKS.has(book.key)
+    MAJOR_BOOK_SET.has(book.key)
   );
 
   const h2hPrices: Record<string, number[]> = {};
@@ -105,16 +82,13 @@ function getSharpConsensus(game: OddsGame) {
   const homePrices = h2hPrices[game.home_team] || [];
   const awayPrices = h2hPrices[game.away_team] || [];
 
-  if (!homePrices.length || !awayPrices.length) {
-    return null;
-  }
+  if (!homePrices.length || !awayPrices.length) return null;
 
   const avgHomeOdds = average(homePrices);
   const avgAwayOdds = average(awayPrices);
 
   const rawHomeProb = americanToImpliedProbability(avgHomeOdds);
   const rawAwayProb = americanToImpliedProbability(avgAwayOdds);
-
   const normalized = normalizeProbabilities(rawHomeProb, rawAwayProb);
 
   return {
@@ -138,7 +112,7 @@ function findBestLine(game: OddsGame) {
   if (!consensus) return null;
 
   for (const book of game.bookmakers || []) {
-    if (!MAJOR_BOOKS.has(book.key)) continue;
+    if (!MAJOR_BOOK_SET.has(book.key)) continue;
 
     const h2hMarket = book.markets?.find((m) => m.key === 'h2h');
     if (!h2hMarket) continue;
@@ -168,7 +142,6 @@ function findBestLine(game: OddsGame) {
 }
 
 function buildStake(ev: number, bankroll: number) {
-  // conservative flat/EV sizing
   if (ev >= 0.05) return Math.max(5, Math.round(bankroll * 0.02));
   if (ev >= 0.03) return Math.max(5, Math.round(bankroll * 0.015));
   return Math.max(5, Math.round(bankroll * 0.01));
@@ -178,10 +151,8 @@ function isAuthorized(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) return true;
 
-  const bearer = req.headers.get('authorization');
-  if (!bearer) return false;
-
-  return bearer === `Bearer ${cronSecret}`;
+  const authHeader = req.headers.get('authorization');
+  return authHeader === `Bearer ${cronSecret}`;
 }
 
 function getSupabase() {
@@ -206,13 +177,12 @@ export async function GET(req: NextRequest) {
 
     const availableSports = await fetchAvailableSports();
     const targetSports = availableSports.filter((sport: { key: string }) =>
-      MAJOR_SPORTS.has(sport.key)
+      MAJOR_SPORTS_SET.has(sport.key)
     );
 
+    const supabase = getSupabase();
     const insertedPicks: any[] = [];
     const debug: any[] = [];
-
-    const supabase = getSupabase();
 
     for (const sport of targetSports) {
       let games: OddsGame[] = [];
@@ -229,7 +199,6 @@ export async function GET(req: NextRequest) {
 
       for (const game of games) {
         const best = findBestLine(game);
-
         if (!best) continue;
         if (best.ev < minEV) continue;
 
