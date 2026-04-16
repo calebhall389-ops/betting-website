@@ -1,53 +1,46 @@
 import { NextResponse } from 'next/server';
-import { fetchLeagueEvents } from '@/lib/sportsgameodds';
 
 export const dynamic = 'force-dynamic';
 
-const LEAGUES = ['MLB', 'NBA', 'NFL', 'NHL'];
+const API_KEY = process.env.SPORTSGAMEODDS_API_KEY!;
+const BASE_URL = 'https://api.sportsgameodds.com/v2';
 
 export async function GET() {
   try {
-    if (!process.env.SPORTSGAMEODDS_API_KEY) {
-      throw new Error('Missing SPORTSGAMEODDS_API_KEY');
-    }
+    const leagues = ['MLB', 'NBA', 'NHL', 'NFL'];
 
-    const results = await Promise.all(
-      LEAGUES.map(async (leagueID) => {
-        try {
-          const response = await fetchLeagueEvents(leagueID);
+    const allEvents: any[] = [];
 
-          return {
-            league: leagueID,
-            events: response?.data || response || [],
-          };
-        } catch (error) {
-          return {
-            league: leagueID,
-            events: [],
-            error:
-              error instanceof Error ? error.message : 'Failed to fetch league',
-          };
+    for (const league of leagues) {
+      const url = `${BASE_URL}/events?leagueID=${league}`;
+
+      const res = await fetch(url, {
+        headers: {
+          'x-api-key': API_KEY,
+          Accept: 'application/json',
+        },
+        cache: 'no-store',
+      });
+
+      const data = await res.json();
+
+      if (data?.data && Array.isArray(data.data)) {
+        for (const event of data.data) {
+          allEvents.push(event);
         }
-      })
-    );
-
-    const totalEvents = results.reduce(
-      (sum, league) => sum + league.events.length,
-      0
-    );
+      }
+    }
 
     return NextResponse.json({
       success: true,
-      provider: 'SportsGameOdds',
-      count: totalEvents,
-      data: results,
+      data: allEvents,
     });
   } catch (error) {
     return NextResponse.json(
       {
         success: false,
         error:
-          error instanceof Error ? error.message : 'Unknown error occurred',
+          error instanceof Error ? error.message : 'Failed to fetch odds',
       },
       { status: 500 }
     );
