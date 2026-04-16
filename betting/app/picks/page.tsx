@@ -13,6 +13,8 @@ type PickRow = {
   stake: number;
   result: string;
   analysis?: string | null;
+  sportsbook?: string | null;
+  sportsbook_key?: string | null;
 };
 
 function getSupabase() {
@@ -81,7 +83,7 @@ export default async function PicksPage() {
   const { data, error } = await supabase
     .from('picks')
     .select(
-      'id, created_at, sport, game, pick, odds, confidence, stake, result, analysis'
+      'id, created_at, sport, game, pick, odds, confidence, stake, result, analysis, sportsbook, sportsbook_key'
     )
     .order('created_at', { ascending: false })
     .limit(100);
@@ -140,9 +142,14 @@ export default async function PicksPage() {
               </div>
 
               <p className="text-sm text-slate-400">{pick.game}</p>
+
               <h2 className="mt-1 text-xl font-bold text-white">
                 {pick.pick}
               </h2>
+
+              <p className="mt-2 text-sm text-slate-300">
+                Sportsbook: {pick.sportsbook ?? '-'}
+              </p>
 
               <div className="mt-3 flex flex-wrap gap-4 text-sm">
                 <span className="font-semibold text-emerald-400">
@@ -158,9 +165,7 @@ export default async function PicksPage() {
                 </span>
               </div>
 
-              <div className="mt-3">
-                {renderStars(pick.confidence)}
-              </div>
+              <div className="mt-3">{renderStars(pick.confidence)}</div>
 
               {pick.analysis && (
                 <p className="mt-4 text-sm leading-6 text-slate-300">
