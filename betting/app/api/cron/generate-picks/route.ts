@@ -139,14 +139,14 @@ function findBestLine(game: OddsGame) {
       const ev = calcEV(winProb, outcome.price);
 
       if (!bestPick || ev > bestPick.ev) {
-        bestPick = {
-          side: outcome.name,
-          book: book.title,
-          bookKey: book.key,
-          odds: outcome.price,
-          winProb,
-          ev,
-        };
+     bestPick = {
+  side: outcome.name,
+  book: book.title,
+  bookKey: book.key,
+  odds: outcome.price,
+  winProb,
+  ev,
+};
       }
     }
   }
@@ -237,21 +237,20 @@ export async function GET(req: NextRequest) {
           .maybeSingle();
 
         if (existing) continue;
-
-        const row = {
-          sport: game.sport_title,
-          game: gameLabel,
-          pick: pickText,
-          odds: best.odds,
-          sportsbook: best.book,
-          sportsbook_key: best.bookKey,
-          stake,
-          to_win: toWin,
-          status: 'pending',
-          ev: Number((best.ev * 100).toFixed(2)),
-          model_prob: Number((best.winProb * 100).toFixed(2)),
-          commence_time: game.commence_time,
-        };
+const row = {
+  sport: game.sport_title,
+  game: gameLabel,
+  pick: pickText,
+  odds: best.odds,
+  sportsbook: best.book,
+  sportsbook_key: best.bookKey,
+  stake,
+  to_win: toWin,
+  status: 'pending',
+  ev: Number((best.ev * 100).toFixed(2)),
+  model_prob: Number((best.winProb * 100).toFixed(2)),
+  commence_time: game.commence_time,
+};
 
         const { data, error } = await supabase
           .from('picks')
