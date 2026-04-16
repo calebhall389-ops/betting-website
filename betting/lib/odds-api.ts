@@ -100,7 +100,7 @@ export async function fetchOddsForSport(sportKey: string) {
     throw new Error(`Failed to load odds for ${sportKey}: ${text}`);
   }
 
-  return await res.json();
+  return res.json();
 }
 
   return await res.json();
