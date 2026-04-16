@@ -40,19 +40,6 @@ type LeagueBlock = {
   error?: string;
 };
 
-const BIG_BOOKS = [
-  'draftkings',
-  'fanduel',
-  'betmgm',
-  'caesars',
-  'espnbet',
-  'hardrockbet',
-  'betrivers',
-  'pointsbet',
-  'paddypower',
-  'bet365',
-];
-
 function getTeamName(team?: TeamInfo, fallback = 'Team') {
   if (!team) return fallback;
 
@@ -83,138 +70,15 @@ function countMarkets(odds?: Record<string, unknown>) {
   return Object.keys(odds).length;
 }
 
-function formatAmericanOdds(value: number | null) {
-  if (value === null || Number.isNaN(value)) return '—';
-  return value > 0 ? `+${value}` : `${value}`;
-}
-
-function titleCaseBook(book: string) {
-  const special: Record<string, string> = {
-    draftkings: 'DraftKings',
-    fanduel: 'FanDuel',
-    betmgm: 'BetMGM',
-    caesars: 'Caesars',
-    espnbet: 'ESPN BET',
-    hardrockbet: 'Hard Rock Bet',
-    betrivers: 'BetRivers',
-    pointsbet: 'PointsBet',
-    paddypower: 'Paddy Power',
-    bet365: 'bet365',
-  };
-
-  return special[book] || book;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function findNumberDeep(value: unknown, keys: string[]): number | null {
-  if (!isRecord(value)) return null;
-
-  for (const key of keys) {
-    const candidate = value[key];
-    if (typeof candidate === 'number') return candidate;
-  }
-
-  for (const nested of Object.values(value)) {
-    if (isRecord(nested)) {
-      const found = findNumberDeep(nested, keys);
-      if (found !== null) return found;
-    }
-  }
-
-  return null;
-}
-
-function getBookmakerKeysFromEvent(event: OddsEvent) {
-  const fromLinks = Object.keys(event.links?.bookmakers || {});
-  const fromOdds = Object.keys(event.odds || {});
-  const merged = Array.from(new Set([...fromLinks, ...fromOdds]));
-
-  return merged.filter((book) => BIG_BOOKS.includes(book.toLowerCase()));
-}
-
-function extractMoneylineForBook(
-  event: OddsEvent,
-  bookKey: string
-): { home: number | null; away: number | null } {
-  const oddsRoot = event.odds;
-
-  if (!isRecord(oddsRoot)) {
-    return { home: null, away: null };
-  }
-
-  const bookNode = oddsRoot[bookKey];
-
-  if (!isRecord(bookNode)) {
-    return { home: null, away: null };
-  }
-
-  const homePrice = findNumberDeep(bookNode, [
-    'home',
-    'homeOdds',
-    'homeMoneyline',
-    'moneylineHome',
-    'priceHome',
-    'americanHome',
-  ]);
-
-  const awayPrice = findNumberDeep(bookNode, [
-    'away',
-    'awayOdds',
-    'awayMoneyline',
-    'moneylineAway',
-    'priceAway',
-    'americanAway',
-  ]);
-
-  return {
-    home: homePrice,
-    away: awayPrice,
-  };
-}
-
-function chooseBestLine(prices: Array<{ book: string; price: number }>) {
-  if (prices.length === 0) return null;
-
-  return prices.reduce((best, current) => {
-    if (current.price > best.price) return current;
-    return best;
-  });
-}
-
-function getBestMajorBookOdds(event: OddsEvent) {
-  const bookmakerKeys = getBookmakerKeysFromEvent(event);
-
-  const homeLines: Array<{ book: string; price: number }> = [];
-  const awayLines: Array<{ book: string; price: number }> = [];
-
-  for (const rawBook of bookmakerKeys) {
-    const book = rawBook.toLowerCase();
-    const { home, away } = extractMoneylineForBook(event, rawBook);
-
-    if (typeof home === 'number') {
-      homeLines.push({ book, price: home });
-    }
-
-    if (typeof away === 'number') {
-      awayLines.push({ book, price: away });
-    }
-  }
-
-  return {
-    home: chooseBestLine(homeLines),
-    away: chooseBestLine(awayLines),
-    booksChecked: bookmakerKeys.map((b) => b.toLowerCase()),
-  };
-}
-
 export default function OddsPage() {
   const [data, setData] = useState<LeagueBlock[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [sportFilter, setSportFilter] = useState('ALL');
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectedEventOdds, setSelectedEventOdds] = useState<unknown>(null);
+  const [eventOddsLoading, setEventOddsLoading] = useState(false);
+  const [eventOddsError, setEventOddsError] = useState('');
 
   useEffect(() => {
     async function fetchOdds() {
@@ -256,12 +120,43 @@ export default function OddsPage() {
     return data.filter((item) => item.league === sportFilter);
   }, [data, sportFilter]);
 
+  async function handleLoadEventOdds(eventID?: string) {
+    if (!eventID) return;
+
+    try {
+      setSelectedEventId(eventID);
+      setEventOddsLoading(true);
+      setEventOddsError('');
+      setSelectedEventOdds(null);
+
+      const res = await fetch(`/api/event-odds?eventID=${eventID}`, {
+        cache: 'no-store',
+      });
+
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Failed to fetch event odds');
+      }
+
+      setSelectedEventOdds(json.data);
+      console.log('ODDS FOR EVENT:', json.data);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to fetch event odds';
+      setEventOddsError(message);
+      console.error('EVENT ODDS ERROR:', message);
+    } finally {
+      setEventOddsLoading(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-black text-white">
       <div className="mx-auto max-w-7xl px-6 py-10">
         <h1 className="text-5xl font-bold tracking-tight">Live Odds</h1>
         <p className="mt-2 text-lg text-gray-400">
-          Live upcoming events from SportsGameOdds
+          Click a game to load its sportsbook odds
         </p>
 
         <div className="mt-10 flex items-center gap-3">
@@ -297,6 +192,28 @@ export default function OddsPage() {
           </div>
         )}
 
+        {selectedEventId && (
+          <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
+            <div className="mb-2 text-lg font-semibold">
+              Loaded odds for event: {selectedEventId}
+            </div>
+
+            {eventOddsLoading && (
+              <div className="text-sm text-gray-400">Loading event odds...</div>
+            )}
+
+            {eventOddsError && (
+              <div className="text-sm text-red-300">{eventOddsError}</div>
+            )}
+
+            {!eventOddsLoading && !eventOddsError && selectedEventOdds && (
+              <div className="text-sm text-green-300">
+                Odds loaded. Open your browser console to inspect the full response.
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="mt-10 space-y-10">
           {!loading &&
             !error &&
@@ -326,13 +243,19 @@ export default function OddsPage() {
                     const home = getTeamName(event.teams?.home, 'Home Team');
                     const away = getTeamName(event.teams?.away, 'Away Team');
                     const marketCount = countMarkets(event.odds);
-                    const bestOdds = getBestMajorBookOdds(event);
                     const startTime = getStartTime(event);
+                    const isSelected = selectedEventId === event.eventID;
 
                     return (
-                      <div
+                      <button
                         key={event.eventID || `${leagueBlock.league}-${index}`}
-                        className="rounded-2xl border border-white/10 bg-white/5 p-6"
+                        type="button"
+                        onClick={() => handleLoadEventOdds(event.eventID)}
+                        className={`rounded-2xl border p-6 text-left transition ${
+                          isSelected
+                            ? 'border-green-500/40 bg-green-500/10'
+                            : 'border-white/10 bg-white/5 hover:bg-white/10'
+                        }`}
                       >
                         <div className="flex flex-col gap-5">
                           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -344,59 +267,18 @@ export default function OddsPage() {
                               <div className="mt-2 text-sm text-gray-400">
                                 {formatStartTime(startTime)}
                               </div>
+
+                              <div className="mt-2 text-sm text-blue-300">
+                                Click to load sportsbook odds
+                              </div>
                             </div>
 
                             <div className="rounded-xl bg-white/5 px-4 py-3 text-sm text-gray-300">
                               Markets: {marketCount}
                             </div>
                           </div>
-
-                          <div className="grid gap-4 md:grid-cols-2">
-                            <div className="rounded-2xl bg-white/5 p-4">
-                              <div className="text-sm text-gray-400">{away} best ML</div>
-                              {bestOdds.away ? (
-                                <>
-                                  <div className="mt-1 text-2xl font-semibold">
-                                    {formatAmericanOdds(bestOdds.away.price)}
-                                  </div>
-                                  <div className="mt-1 text-sm text-green-300">
-                                    {titleCaseBook(bestOdds.away.book)}
-                                  </div>
-                                </>
-                              ) : (
-                                <div className="mt-1 text-lg text-gray-400">
-                                  No major book line found
-                                </div>
-                              )}
-                            </div>
-
-                            <div className="rounded-2xl bg-white/5 p-4">
-                              <div className="text-sm text-gray-400">{home} best ML</div>
-                              {bestOdds.home ? (
-                                <>
-                                  <div className="mt-1 text-2xl font-semibold">
-                                    {formatAmericanOdds(bestOdds.home.price)}
-                                  </div>
-                                  <div className="mt-1 text-sm text-green-300">
-                                    {titleCaseBook(bestOdds.home.book)}
-                                  </div>
-                                </>
-                              ) : (
-                                <div className="mt-1 text-lg text-gray-400">
-                                  No major book line found
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="text-xs text-gray-500">
-                            Major books checked:{' '}
-                            {bestOdds.booksChecked.length > 0
-                              ? bestOdds.booksChecked.map(titleCaseBook).join(', ')
-                              : 'none found in this event'}
-                          </div>
                         </div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
