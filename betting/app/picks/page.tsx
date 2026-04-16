@@ -25,6 +25,7 @@ export default function PicksPage() {
   const [sportFilter, setSportFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState('newest');
   const [sharpOnly, setSharpOnly] = useState(false);
+  const [todayOnly, setTodayOnly] = useState(false);
 
   useEffect(() => {
     async function fetchPicks() {
@@ -36,12 +37,13 @@ export default function PicksPage() {
           cache: 'no-store',
         });
 
+        const data = await res.json();
+
         if (!res.ok) {
-          throw new Error('Failed to fetch picks');
+          throw new Error(data?.error || 'Failed to fetch picks');
         }
 
-        const data = await res.json();
-        setPicks(data.picks || []);
+        setPicks(Array.isArray(data?.picks) ? data.picks : []);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Something went wrong');
       } finally {
@@ -87,12 +89,14 @@ export default function PicksPage() {
       return `${value}%`;
     }
 
-    const asNumber = Number(value);
+    const cleaned = String(value).replace('%', '').trim();
+    const asNumber = Number(cleaned);
+
     if (!Number.isNaN(asNumber)) {
       return `${asNumber}%`;
     }
 
-    return value;
+    return String(value);
   }
 
   function formatCreatedAt(dateString: string) {
@@ -139,7 +143,11 @@ export default function PicksPage() {
   }, [picks]);
 
   const filteredPicks = useMemo(() => {
-    let result = picks.filter((pick) => isToday(pick.created_at));
+    let result = [...picks];
+
+    if (todayOnly) {
+      result = result.filter((pick) => isToday(pick.created_at));
+    }
 
     if (sportFilter !== 'ALL') {
       result = result.filter((pick) => pick.sport === sportFilter);
@@ -162,11 +170,12 @@ export default function PicksPage() {
         const aConfidence =
           typeof a.confidence === 'number'
             ? a.confidence
-            : Number(a.confidence) || 0;
+            : Number(String(a.confidence).replace('%', '').trim()) || 0;
+
         const bConfidence =
           typeof b.confidence === 'number'
             ? b.confidence
-            : Number(b.confidence) || 0;
+            : Number(String(b.confidence).replace('%', '').trim()) || 0;
 
         return bConfidence - aConfidence;
       }
@@ -181,7 +190,7 @@ export default function PicksPage() {
     });
 
     return result;
-  }, [picks, sportFilter, sortBy, sharpOnly]);
+  }, [picks, sportFilter, sortBy, sharpOnly, todayOnly]);
 
   return (
     <main className="min-h-screen bg-black text-white">
@@ -189,7 +198,7 @@ export default function PicksPage() {
         <div className="mb-8">
           <h1 className="text-4xl font-bold tracking-tight">Latest Picks</h1>
           <p className="mt-2 text-base text-gray-400">
-            Showing only today&apos;s sharp picks
+            View your generated picks, EV, edge, sportsbook, and analysis
           </p>
         </div>
 
@@ -216,25 +225,15 @@ export default function PicksPage() {
               onChange={(e) => setSortBy(e.target.value)}
               className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none"
             >
-              <option value="newest" className="bg-gray-900">
-                Newest
-              </option>
-              <option value="ev" className="bg-gray-900">
-                Highest EV
-              </option>
-              <option value="edge" className="bg-gray-900">
-                Highest Edge
-              </option>
-              <option value="confidence" className="bg-gray-900">
-                Highest Confidence
-              </option>
-              <option value="odds" className="bg-gray-900">
-                Highest Odds
-              </option>
+              <option value="newest" className="bg-gray-900">Newest</option>
+              <option value="ev" className="bg-gray-900">Highest EV</option>
+              <option value="edge" className="bg-gray-900">Highest Edge</option>
+              <option value="confidence" className="bg-gray-900">Highest Confidence</option>
+              <option value="odds" className="bg-gray-900">Highest Odds</option>
             </select>
           </div>
 
-          <div className="md:col-span-2 flex items-end">
+          <div className="flex items-end">
             <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/10 bg-white/10 px-4 py-3">
               <input
                 type="checkbox"
@@ -243,6 +242,18 @@ export default function PicksPage() {
                 className="h-4 w-4"
               />
               <span className="text-sm text-white">Sharp picks only</span>
+            </label>
+          </div>
+
+          <div className="flex items-end">
+            <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/10 bg-white/10 px-4 py-3">
+              <input
+                type="checkbox"
+                checked={todayOnly}
+                onChange={(e) => setTodayOnly(e.target.checked)}
+                className="h-4 w-4"
+              />
+              <span className="text-sm text-white">Today only</span>
             </label>
           </div>
         </div>
@@ -261,7 +272,7 @@ export default function PicksPage() {
 
         {!loading && !error && filteredPicks.length === 0 && (
           <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center text-gray-400">
-            No picks found for today with the current filters.
+            No picks found with the current filters.
           </div>
         )}
 
@@ -281,7 +292,6 @@ export default function PicksPage() {
 
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-2xl font-bold">{pick.pick}</h2>
-
                       {isSharpPick(pick) && (
                         <span className="rounded-full bg-green-500/20 px-3 py-1 text-xs font-semibold text-green-300">
                           🔥 Sharp Pick
@@ -333,22 +343,14 @@ export default function PicksPage() {
 
                   <div className="rounded-2xl bg-white/5 p-4">
                     <div className="text-sm text-gray-400">Edge</div>
-                    <div
-                      className={`text-2xl font-semibold ${getEdgeColor(
-                        pick.edge
-                      )}`}
-                    >
+                    <div className={`text-2xl font-semibold ${getEdgeColor(pick.edge)}`}>
                       {formatPercent(pick.edge)}
                     </div>
                   </div>
 
                   <div className="rounded-2xl bg-white/5 p-4">
                     <div className="text-sm text-gray-400">EV</div>
-                    <div
-                      className={`text-2xl font-semibold ${getEvColor(
-                        pick.ev
-                      )}`}
-                    >
+                    <div className={`text-2xl font-semibold ${getEvColor(pick.ev)}`}>
                       {formatPercent(pick.ev)}
                     </div>
                   </div>
