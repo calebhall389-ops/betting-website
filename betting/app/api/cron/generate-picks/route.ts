@@ -56,13 +56,13 @@ type CandidatePick = {
   ev: number;
 };
 
-const MIN_EDGE_STRONG = 0.01;
-const MIN_EV_STRONG = 0.02;
-const MIN_EDGE_OK = 0.005;
-const MIN_EV_OK = 0.01;
-const MAX_FAVORITE_PRICE = -300;
-const MAX_UNDERDOG_PRICE = 500;
-const MAX_PICKS = 25;
+const MIN_EDGE_STRONG = 0.02;
+const MIN_EV_STRONG = 0.05;
+const MIN_EDGE_OK = 0.015;
+const MIN_EV_OK = 0.035;
+const MAX_FAVORITE_PRICE = -220;
+const MAX_UNDERDOG_PRICE = 300;
+const MAX_PICKS = 10;
 const BANKROLL = Number(process.env.BANKROLL ?? 1000);
 
 function confidenceFromEV(ev: number): number {
@@ -256,7 +256,7 @@ export async function GET(request: NextRequest) {
               const marketOutcomeKey = `${market.key}__${outcome.name}__${pointKey}`;
               const allPrices = marketPriceMap.get(marketOutcomeKey) ?? [];
 
-              if (allPrices.length < 2) continue;
+             if (allPrices.length < 4) continue;
 
               const priceIndex = allPrices.indexOf(outcome.price);
               const pricesForConsensus =
