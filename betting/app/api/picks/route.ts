@@ -4,17 +4,10 @@ import { createClient } from '@supabase/supabase-js';
 export const dynamic = 'force-dynamic';
 
 function getSupabase() {
-  const url =
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-  if (!url || !serviceRoleKey) {
-    throw new Error(
-      'Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) or SUPABASE_SERVICE_ROLE_KEY'
-    );
-  }
-
-  return createClient(url, serviceRoleKey, {
+  return createClient(url, anonKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
@@ -32,74 +25,16 @@ export async function GET() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Supabase GET error:', error);
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: error.message,
-          picks: [],
-        },
-        { status: 500 }
-      );
+      throw new Error(error.message);
     }
 
     return NextResponse.json({
       success: true,
-      picks: Array.isArray(data) ? data : [],
+      picks: data ?? [],
     });
-  } catch (error) {
-    console.error('GET /api/picks crashed:', error);
-
+  } catch (error: any) {
     return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown server error',
-        picks: [],
-      },
-      { status: 500 }
-    );
-  }
-}
-
-export async function POST(request: Request) {
-  try {
-    const supabase = getSupabase();
-    const body = await request.json();
-
-    const { data, error } = await supabase
-      .from('picks')
-      .insert([body])
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Supabase POST error:', error);
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: error.message,
-        },
-        { status: 400 }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        success: true,
-        pick: data,
-      },
-      { status: 201 }
-    );
-  } catch (error) {
-    console.error('POST /api/picks crashed:', error);
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Internal server error',
-      },
+      { error: error.message || 'Failed to fetch picks' },
       { status: 500 }
     );
   }
