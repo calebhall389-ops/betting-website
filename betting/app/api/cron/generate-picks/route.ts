@@ -9,10 +9,13 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+// Use shared constants from odds-api.ts
 const MAJOR_BOOK_SET = new Set(MAJOR_BOOKMAKERS);
 const MAJOR_SPORTS_SET = new Set(ALLOWED_SPORT_KEYS);
-export const dynamic = 'force-dynamic';
 
+// ==============================
+// Types
+// ==============================
 type OddsOutcome = {
   name: string;
   price: number;
@@ -39,14 +42,19 @@ type OddsGame = {
   bookmakers: OddsBookmaker[];
 };
 
+// ==============================
+// Utility Functions
+// ==============================
 function americanToImpliedProbability(odds: number): number {
-  if (odds > 0) return 100 / (odds + 100);
-  return Math.abs(odds) / (Math.abs(odds) + 100);
+  return odds > 0
+    ? 100 / (odds + 100)
+    : Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
 function decimalFromAmerican(odds: number): number {
-  if (odds > 0) return 1 + odds / 100;
-  return 1 + 100 / Math.abs(odds);
+  return odds > 0
+    ? 1 + odds / 100
+    : 1 + 100 / Math.abs(odds);
 }
 
 function average(nums: number[]): number {
@@ -69,6 +77,9 @@ function calcEV(winProb: number, americanOdds: number): number {
   return winProb * (decimalOdds - 1) - (1 - winProb);
 }
 
+// ==============================
+// Sharp Consensus Model
+// ==============================
 function getSharpConsensus(game: OddsGame) {
   const majorBooks = (game.bookmakers || []).filter((book) =>
     MAJOR_BOOK_SET.has(book.key)
@@ -131,7 +142,10 @@ function findBestLine(game: OddsGame) {
       if (!isHome && !isAway) continue;
       if (typeof outcome.price !== 'number') continue;
 
-      const winProb = isHome ? consensus.homeWinProb : consensus.awayWinProb;
+      const winProb = isHome
+        ? consensus.homeWinProb
+        : consensus.awayWinProb;
+
       const ev = calcEV(winProb, outcome.price);
 
       if (!bestPick || ev > bestPick.ev) {
@@ -155,6 +169,9 @@ function buildStake(ev: number, bankroll: number) {
   return Math.max(5, Math.round(bankroll * 0.01));
 }
 
+// ==============================
+// Authorization & Supabase
+// ==============================
 function isAuthorized(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) return true;
@@ -174,18 +191,25 @@ function getSupabase() {
   return createClient(url, serviceRole);
 }
 
+// ==============================
+// Route Handler
+// ==============================
 export async function GET(req: NextRequest) {
   try {
     if (!isAuthorized(req)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
     }
 
     const bankroll = Number(process.env.BANKROLL || 1000);
     const minEV = Number(process.env.MIN_EV_THRESHOLD || 0.03);
 
     const availableSports = await fetchAvailableSports();
-    const targetSports = availableSports.filter((sport: { key: string }) =>
-      MAJOR_SPORTS_SET.has(sport.key)
+    const targetSports = availableSports.filter(
+      (sport: { key: string }) =>
+        MAJOR_SPORTS_SET.has(sport.key)
     );
 
     const supabase = getSupabase();
@@ -200,15 +224,17 @@ export async function GET(req: NextRequest) {
       } catch (error) {
         debug.push({
           sport: sport.key,
-          error: error instanceof Error ? error.message : 'Failed to fetch odds',
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Failed to fetch odds',
         });
         continue;
       }
 
       for (const game of games) {
         const best = findBestLine(game);
-        if (!best) continue;
-        if (best.ev < minEV) continue;
+        if (!best || best.ev < minEV) continue;
 
         const gameLabel = `${game.away_team} at ${game.home_team}`;
         const pickText =
@@ -217,10 +243,25 @@ export async function GET(req: NextRequest) {
             : `${game.away_team} ML`;
 
         const stake = buildStake(best.ev, bankroll);
+
         const toWin =
           best.odds > 0
             ? Number(((stake * best.odds) / 100).toFixed(2))
-            : Number(((stake * 100) / Math.abs(best.odds)).toFixed(2));
+            : Number(
+                ((stake * 100) / Math.abs(best.odds)).toFixed(2)
+              );
+
+        // Prevent duplicate picks
+        const { data: existing } = await supabase
+          .from('picks')
+          .select('id')
+          .eq('game', gameLabel)
+          .eq('pick', pickText)
+          .eq('sportsbook', best.book)
+          .eq('status', 'pending')
+          .maybeSingle();
+
+        if (existing) continue;
 
         const row = {
           sport: game.sport_title,
@@ -269,7 +310,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Unknown error',
       },
       { status: 500 }
     );
