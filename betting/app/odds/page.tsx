@@ -76,7 +76,7 @@ export default function OddsPage() {
   const [error, setError] = useState('');
   const [sportFilter, setSportFilter] = useState('ALL');
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [selectedEventOdds, setSelectedEventOdds] = useState<unknown>(null);
+  const [selectedEventOdds, setSelectedEventOdds] = useState<Record<string, unknown> | null>(null);
   const [eventOddsLoading, setEventOddsLoading] = useState(false);
   const [eventOddsError, setEventOddsError] = useState('');
 
@@ -139,7 +139,7 @@ export default function OddsPage() {
         throw new Error(json.error || 'Failed to fetch event odds');
       }
 
-      setSelectedEventOdds(json.data);
+      setSelectedEventOdds(json.data as Record<string, unknown>);
       console.log('ODDS FOR EVENT:', json.data);
     } catch (err) {
       const message =
@@ -206,7 +206,7 @@ export default function OddsPage() {
               <div className="text-sm text-red-300">{eventOddsError}</div>
             )}
 
-            {!eventOddsLoading && !eventOddsError && selectedEventOdds && (
+            {!eventOddsLoading && !eventOddsError && selectedEventOdds !== null && (
               <div className="text-sm text-green-300">
                 Odds loaded. Open your browser console to inspect the full response.
               </div>
