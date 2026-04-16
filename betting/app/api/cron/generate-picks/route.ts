@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { fetchAvailableSports, fetchOddsForSport } from '@/lib/odds-api';
-import { MAJOR_BOOK_SET, MAJOR_SPORTS_SET } from '@/lib/sportsbooks';
+import { MAJOR_BOOK_SET, MAJOR_SPORTS_SET } from '../../../../lib/sportsbooks';
 
 export const dynamic = 'force-dynamic';
 
