@@ -2,147 +2,57 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-type GenericEvent = {
-  id?: string;
-  eventID?: string;
-  eventId?: string;
-  awayTeam?: string;
-  homeTeam?: string;
-  awayTeamName?: string;
-  homeTeamName?: string;
-  name?: string;
-  slug?: string;
-  startTime?: string;
-  startsAt?: string;
-  commenceTime?: string;
-  odds?: Record<string, unknown>;
-  [key: string]: unknown;
+type TeamNames = {
+  long?: string;
+  short?: string;
+  medium?: string;
 };
 
-type LeagueData = {
+type TeamInfo = {
+  teamID?: string;
+  names?: TeamNames;
+};
+
+type Teams = {
+  home?: TeamInfo;
+  away?: TeamInfo;
+};
+
+type OddsEvent = {
+  eventID?: string;
+  sportID?: string;
+  leagueID?: string;
+  type?: string;
+  teams?: Teams;
+  startTime?: string;
+  odds?: Record<string, unknown>;
+};
+
+type LeagueBlock = {
   league: string;
-  events: GenericEvent[];
+  events: OddsEvent[];
   error?: string;
 };
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return null;
-}
+function getTeamName(team?: TeamInfo, fallback = 'Team') {
+  if (!team) return fallback;
 
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function readString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
-function extractTeamNames(event: GenericEvent) {
-  const directAway =
-    readString(event.awayTeam) || readString(event.awayTeamName);
-  const directHome =
-    readString(event.homeTeam) || readString(event.homeTeamName);
-
-  if (directAway || directHome) {
-    return {
-      away: directAway || 'Away Team',
-      home: directHome || 'Home Team',
-    };
-  }
-
-  const teams = asArray((event as Record<string, unknown>).teams);
-  if (teams.length >= 2) {
-    const first = asRecord(teams[0]);
-    const second = asRecord(teams[1]);
-
-    const firstName =
-      readString(first?.name) ||
-      readString(first?.displayName) ||
-      readString(first?.teamName);
-    const secondName =
-      readString(second?.name) ||
-      readString(second?.displayName) ||
-      readString(second?.teamName);
-
-    if (firstName || secondName) {
-      return {
-        away: firstName || 'Away Team',
-        home: secondName || 'Home Team',
-      };
-    }
-  }
-
-  const participants = asArray((event as Record<string, unknown>).participants);
-  if (participants.length >= 2) {
-    const first = asRecord(participants[0]);
-    const second = asRecord(participants[1]);
-
-    const firstName =
-      readString(first?.name) ||
-      readString(first?.displayName) ||
-      readString(first?.teamName);
-    const secondName =
-      readString(second?.name) ||
-      readString(second?.displayName) ||
-      readString(second?.teamName);
-
-    if (firstName || secondName) {
-      return {
-        away: firstName || 'Away Team',
-        home: secondName || 'Home Team',
-      };
-    }
-  }
-
-  const matchup = readString(event.name) || readString((event as Record<string, unknown>).matchup);
-  if (matchup) {
-    if (matchup.includes(' at ')) {
-      const [away, home] = matchup.split(' at ');
-      return {
-        away: away || 'Away Team',
-        home: home || 'Home Team',
-      };
-    }
-
-    if (matchup.includes(' @ ')) {
-      const [away, home] = matchup.split(' @ ');
-      return {
-        away: away || 'Away Team',
-        home: home || 'Home Team',
-      };
-    }
-
-    if (matchup.includes(' vs ')) {
-      const [away, home] = matchup.split(' vs ');
-      return {
-        away: away || 'Away Team',
-        home: home || 'Home Team',
-      };
-    }
-  }
-
-  return {
-    away: 'Away Team',
-    home: 'Home Team',
-  };
-}
-
-function extractStartTime(event: GenericEvent) {
   return (
-    readString(event.startTime) ||
-    readString(event.startsAt) ||
-    readString(event.commenceTime)
+    team.names?.long ||
+    team.names?.medium ||
+    team.names?.short ||
+    fallback
   );
 }
 
-function formatStartTime(value: string) {
-  if (!value) return 'Start time unavailable';
+function formatStartTime(startTime?: string) {
+  if (!startTime) return 'Start time unavailable';
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  const date = new Date(startTime);
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Start time unavailable';
+  }
 
   return date.toLocaleString('en-US', {
     dateStyle: 'medium',
@@ -150,23 +60,13 @@ function formatStartTime(value: string) {
   });
 }
 
-function getEventId(event: GenericEvent, index: number) {
-  return (
-    readString(event.id) ||
-    readString(event.eventID) ||
-    readString(event.eventId) ||
-    `event-${index}`
-  );
-}
-
-function countMarkets(event: GenericEvent) {
-  const odds = asRecord(event.odds);
-  if (!odds) return 0;
+function countMarkets(odds?: Record<string, unknown>) {
+  if (!odds || typeof odds !== 'object') return 0;
   return Object.keys(odds).length;
 }
 
 export default function OddsPage() {
-  const [data, setData] = useState<LeagueData[]>([]);
+  const [data, setData] = useState<LeagueBlock[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [sportFilter, setSportFilter] = useState('ALL');
@@ -198,9 +98,12 @@ export default function OddsPage() {
     fetchOdds();
   }, []);
 
-  const leagues = useMemo(() => {
-    const names = data.map((item) => item.league).filter(Boolean);
-    return ['ALL', ...names];
+  const sports = useMemo(() => {
+    const leagues = data
+      .map((item) => item.league)
+      .filter((league): league is string => Boolean(league));
+
+    return ['ALL', ...leagues];
   }, [data]);
 
   const filteredData = useMemo(() => {
@@ -209,47 +112,47 @@ export default function OddsPage() {
   }, [data, sportFilter]);
 
   return (
-    <main className="min-h-screen bg-black px-6 py-10 text-white">
-      <div className="mx-auto max-w-7xl">
-        <h1 className="mb-2 text-5xl font-bold tracking-tight">Live Odds</h1>
-        <p className="mb-8 text-gray-400">
+    <main className="min-h-screen bg-black text-white">
+      <div className="mx-auto max-w-7xl px-6 py-10">
+        <h1 className="text-5xl font-bold tracking-tight">Live Odds</h1>
+        <p className="mt-2 text-lg text-gray-400">
           Live upcoming events from SportsGameOdds
         </p>
 
-        <div className="mb-8 flex items-center gap-3">
+        <div className="mt-10 flex items-center gap-3">
           <label className="text-sm text-gray-400">Sport</label>
           <select
             value={sportFilter}
             onChange={(e) => setSportFilter(e.target.value)}
             className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-white outline-none"
           >
-            {leagues.map((league) => (
-              <option key={league} value={league} className="bg-neutral-900">
-                {league}
+            {sports.map((sport) => (
+              <option key={sport} value={sport} className="bg-neutral-900">
+                {sport}
               </option>
             ))}
           </select>
         </div>
 
         {loading && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-gray-300">
+          <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6 text-gray-300">
             Loading odds...
           </div>
         )}
 
         {error && !loading && (
-          <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-6 text-red-300">
+          <div className="mt-8 rounded-2xl border border-red-500/20 bg-red-500/10 p-6 text-red-300">
             {error}
           </div>
         )}
 
         {!loading && !error && filteredData.length === 0 && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-gray-400">
+          <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6 text-gray-400">
             No odds available.
           </div>
         )}
 
-        <div className="space-y-10">
+        <div className="mt-10 space-y-10">
           {!loading &&
             !error &&
             filteredData.map((leagueBlock) => (
@@ -273,31 +176,30 @@ export default function OddsPage() {
                   </div>
                 )}
 
-                <div className="grid gap-4">
+                <div className="grid gap-5">
                   {leagueBlock.events?.map((event, index) => {
-                    const teams = extractTeamNames(event);
-                    const startTime = extractStartTime(event);
-                    const marketCount = countMarkets(event);
+                    const home = getTeamName(event.teams?.home, 'Home Team');
+                    const away = getTeamName(event.teams?.away, 'Away Team');
+                    const marketCount = countMarkets(event.odds);
 
                     return (
                       <div
-                        key={getEventId(event, index)}
-                        className="rounded-2xl border border-white/10 bg-white/5 p-5"
+                        key={event.eventID || `${leagueBlock.league}-${index}`}
+                        className="rounded-2xl border border-white/10 bg-white/5 p-6"
                       >
-                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                           <div>
                             <div className="text-2xl font-semibold">
-                              {teams.away} @ {teams.home}
+                              {away} @ {home}
                             </div>
-                            <div className="mt-1 text-sm text-gray-400">
-                              {formatStartTime(startTime)}
+
+                            <div className="mt-2 text-sm text-gray-400">
+                              {formatStartTime(event.startTime)}
                             </div>
                           </div>
 
-                          <div className="flex gap-3">
-                            <div className="rounded-xl bg-white/5 px-4 py-2 text-sm text-gray-300">
-                              Markets: {marketCount}
-                            </div>
+                          <div className="rounded-xl bg-white/5 px-4 py-3 text-sm text-gray-300">
+                            Markets: {marketCount}
                           </div>
                         </div>
                       </div>
