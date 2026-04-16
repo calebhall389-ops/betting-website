@@ -1,36 +1,61 @@
 const API_KEY = process.env.SPORTSGAMEODDS_API_KEY!;
 const BASE_URL =
-  process.env.SPORTSGAMEODDS_BASE_URL ||
-  'https://api.sportsgameodds.com/v2';
+  process.env.SPORTSGAMEODDS_BASE_URL || 'https://api.sportsgameodds.com/v2';
 
 if (!API_KEY) {
   throw new Error('Missing SPORTSGAMEODDS_API_KEY');
 }
 
-async function fetchFromSGO(endpoint: string) {
-  const res = await fetch(`${BASE_URL}${endpoint}`, {
-    headers: {
-      'x-api-key': API_KEY,
-    },
-    next: { revalidate: 60 }, // Cache for 60 seconds
-  });
+type FetchOptions = {
+  searchParams?: Record<string, string | number | boolean | undefined>;
+};
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`SportsGameOdds API error: ${text}`);
+function buildUrl(path: string, options?: FetchOptions) {
+  const url = new URL(`${BASE_URL}${path}`);
+
+  if (options?.searchParams) {
+    for (const [key, value] of Object.entries(options.searchParams)) {
+      if (value !== undefined && value !== null) {
+        url.searchParams.set(key, String(value));
+      }
+    }
   }
 
-  return res.json();
+  return url.toString();
 }
 
-export async function fetchSports() {
-  return fetchFromSGO('/sports');
+async function fetchFromSportsGameOdds(
+  path: string,
+  options?: FetchOptions
+) {
+  const url = buildUrl(path, options);
+
+  const res = await fetch(url, {
+    headers: {
+      'x-api-key': API_KEY,
+      Accept: 'application/json',
+    },
+    cache: 'no-store',
+  });
+
+  const text = await res.text();
+
+  if (!res.ok) {
+    throw new Error(`SportsGameOdds API error (${res.status}): ${text}`);
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Invalid JSON returned from SportsGameOdds: ${text}`);
+  }
 }
 
-export async function fetchOdds(sport: string) {
-  return fetchFromSGO(`/events?league=${sport}`);
-}
-
-export async function fetchEventOdds(eventId: string) {
-  return fetchFromSGO(`/events/${eventId}/odds`);
+export async function fetchLeagueEvents(leagueID: string) {
+  return fetchFromSportsGameOdds('/events', {
+    searchParams: {
+      leagueID,
+      oddsAvailable: true,
+    },
+  });
 }
