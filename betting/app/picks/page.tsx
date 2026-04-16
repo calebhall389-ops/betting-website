@@ -1,166 +1,376 @@
-import { createClient } from '@supabase/supabase-js';
+'use client';
 
-export const dynamic = 'force-dynamic';
+import { useEffect, useMemo, useState } from 'react';
 
 type Pick = {
-  id?: string;
-  created_at?: string;
-  sport?: string | null;
-  game?: string | null;
-  pick?: string | null;
-  odds?: number | string | null;
-  confidence?: string | number | null;
-  stake?: number | string | null;
-  result?: string | null;
-  analysis?: string | null;
+  id: string;
+  created_at: string;
+  sport: string;
+  game: string;
+  pick: string;
+  odds: number;
+  confidence: string | number;
+  stake: number;
+  result: string;
+  sportsbook?: string | null;
   edge?: number | null;
   ev?: number | null;
-  sportsbook?: string | null;
-  model_probability?: number | null;
-  market_probability?: number | null;
+  analysis?: string | null;
 };
 
-function getSupabase() {
-  const url =
-    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+export default function PicksPage() {
+  const [picks, setPicks] = useState<Pick[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [sportFilter, setSportFilter] = useState('ALL');
+  const [sortBy, setSortBy] = useState('newest');
+  const [sharpOnly, setSharpOnly] = useState(false);
 
-  if (!url || !serviceRoleKey) {
-    throw new Error(
-      'Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY'
+  useEffect(() => {
+    async function fetchPicks() {
+      try {
+        setLoading(true);
+        setError('');
+
+        const res = await fetch('/api/picks', {
+          cache: 'no-store',
+        });
+
+        if (!res.ok) {
+          throw new Error('Failed to fetch picks');
+        }
+
+        const data = await res.json();
+        setPicks(data.picks || []);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Something went wrong');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchPicks();
+  }, []);
+
+  function isToday(dateString: string) {
+    const pickDate = new Date(dateString);
+    const now = new Date();
+
+    return (
+      pickDate.getFullYear() === now.getFullYear() &&
+      pickDate.getMonth() === now.getMonth() &&
+      pickDate.getDate() === now.getDate()
     );
   }
 
-  return createClient(url, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
-}
-
-export default async function PicksPage() {
-  let picks: Pick[] = [];
-  let error: string | null = null;
-
-  try {
-    const supabase = getSupabase();
-
-    const { data, error: supabaseError } = await supabase
-      .from('picks')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(5);
-
-    if (supabaseError) {
-      throw new Error(supabaseError.message);
+  function formatOdds(odds: number | null | undefined) {
+    if (odds === null || odds === undefined || Number.isNaN(Number(odds))) {
+      return '—';
     }
 
-    picks = Array.isArray(data) ? data : [];
-  } catch (err) {
-    error = err instanceof Error ? err.message : 'Something went wrong';
+    const num = Number(odds);
+    return num > 0 ? `+${num}` : `${num}`;
   }
 
+  function formatPercent(value: number | null | undefined) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return '—';
+    }
+
+    return `${Number(value).toFixed(2)}%`;
+  }
+
+  function formatConfidence(value: string | number | null | undefined) {
+    if (value === null || value === undefined || value === '') return '—';
+
+    if (typeof value === 'number') {
+      return `${value}%`;
+    }
+
+    const asNumber = Number(value);
+    if (!Number.isNaN(asNumber)) {
+      return `${asNumber}%`;
+    }
+
+    return value;
+  }
+
+  function formatCreatedAt(dateString: string) {
+    try {
+      return new Date(dateString).toLocaleString('en-US', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+    } catch {
+      return dateString;
+    }
+  }
+
+  function getEdgeColor(edge: number | null | undefined) {
+    if (edge === null || edge === undefined) return 'text-gray-300';
+    if (edge >= 3) return 'text-green-400';
+    if (edge >= 1.5) return 'text-yellow-300';
+    return 'text-gray-300';
+  }
+
+  function getEvColor(ev: number | null | undefined) {
+    if (ev === null || ev === undefined) return 'text-gray-300';
+    if (ev >= 5) return 'text-green-400';
+    if (ev >= 2) return 'text-yellow-300';
+    return 'text-gray-300';
+  }
+
+  function isSharpPick(pick: Pick) {
+    const ev = pick.ev ?? 0;
+    const edge = pick.edge ?? 0;
+    return ev >= 2 && edge >= 1;
+  }
+
+  const sports = useMemo(() => {
+    const uniqueSports = Array.from(
+      new Set(
+        picks
+          .map((pick) => pick.sport?.trim())
+          .filter((sport): sport is string => Boolean(sport))
+      )
+    ).sort();
+
+    return ['ALL', ...uniqueSports];
+  }, [picks]);
+
+  const filteredPicks = useMemo(() => {
+    let result = picks.filter((pick) => isToday(pick.created_at));
+
+    if (sportFilter !== 'ALL') {
+      result = result.filter((pick) => pick.sport === sportFilter);
+    }
+
+    if (sharpOnly) {
+      result = result.filter((pick) => isSharpPick(pick));
+    }
+
+    result = [...result].sort((a, b) => {
+      if (sortBy === 'ev') {
+        return (b.ev ?? -999) - (a.ev ?? -999);
+      }
+
+      if (sortBy === 'edge') {
+        return (b.edge ?? -999) - (a.edge ?? -999);
+      }
+
+      if (sortBy === 'confidence') {
+        const aConfidence =
+          typeof a.confidence === 'number'
+            ? a.confidence
+            : Number(a.confidence) || 0;
+        const bConfidence =
+          typeof b.confidence === 'number'
+            ? b.confidence
+            : Number(b.confidence) || 0;
+
+        return bConfidence - aConfidence;
+      }
+
+      if (sortBy === 'odds') {
+        return (b.odds ?? -99999) - (a.odds ?? -99999);
+      }
+
+      return (
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+    });
+
+    return result;
+  }, [picks, sportFilter, sortBy, sharpOnly]);
+
   return (
-    <main className="min-h-screen bg-black text-white p-6">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+    <main className="min-h-screen bg-black text-white">
+      <div className="mx-auto max-w-6xl px-4 py-10">
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold tracking-tight">Latest Picks</h1>
+          <p className="mt-2 text-base text-gray-400">
+            Showing only today&apos;s sharp picks
+          </p>
+        </div>
+
+        <div className="mb-6 grid gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 md:grid-cols-4">
           <div>
-            <h1 className="text-3xl font-bold">Latest Picks</h1>
-            <p className="mt-1 text-sm text-zinc-400">
-              Showing the 5 most recent sharp picks
-            </p>
+            <label className="mb-2 block text-sm text-gray-400">Sport</label>
+            <select
+              value={sportFilter}
+              onChange={(e) => setSportFilter(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none"
+            >
+              {sports.map((sport) => (
+                <option key={sport} value={sport} className="bg-gray-900">
+                  {sport}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm text-gray-400">Sort By</label>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none"
+            >
+              <option value="newest" className="bg-gray-900">
+                Newest
+              </option>
+              <option value="ev" className="bg-gray-900">
+                Highest EV
+              </option>
+              <option value="edge" className="bg-gray-900">
+                Highest Edge
+              </option>
+              <option value="confidence" className="bg-gray-900">
+                Highest Confidence
+              </option>
+              <option value="odds" className="bg-gray-900">
+                Highest Odds
+              </option>
+            </select>
+          </div>
+
+          <div className="md:col-span-2 flex items-end">
+            <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/10 bg-white/10 px-4 py-3">
+              <input
+                type="checkbox"
+                checked={sharpOnly}
+                onChange={(e) => setSharpOnly(e.target.checked)}
+                className="h-4 w-4"
+              />
+              <span className="text-sm text-white">Sharp picks only</span>
+            </label>
           </div>
         </div>
 
-        {error && (
-          <div className="rounded-xl border border-red-800 bg-red-950 p-4 text-red-200">
-            Error: {error}
+        {loading && (
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-gray-300">
+            Loading picks...
           </div>
         )}
 
-        {!error && picks.length === 0 && (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            No picks found.
+        {error && !loading && (
+          <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-6 text-red-300">
+            {error}
           </div>
         )}
 
-        <div className="grid gap-4">
-          {picks.map((pick, index) => (
-            <div
-              key={pick.id ?? `${pick.game ?? 'game'}-${index}`}
-              className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5 shadow"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm text-zinc-400">
-                    {pick.sport ?? 'Unknown Sport'}
-                  </p>
-                  <h2 className="text-xl font-semibold">
-                    {pick.pick ?? 'Unknown Pick'}
-                  </h2>
-                  <p className="text-zinc-300">
-                    {pick.game ?? 'Unknown Game'}
-                  </p>
+        {!loading && !error && filteredPicks.length === 0 && (
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center text-gray-400">
+            No picks found for today with the current filters.
+          </div>
+        )}
+
+        <div className="space-y-6">
+          {!loading &&
+            !error &&
+            filteredPicks.map((pick) => (
+              <div
+                key={pick.id}
+                className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 p-6 shadow-lg"
+              >
+                <div className="mb-5 flex items-start justify-between gap-4">
+                  <div>
+                    <div className="mb-1 text-sm uppercase tracking-wide text-gray-400">
+                      {pick.sport || 'Unknown Sport'}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-2xl font-bold">{pick.pick}</h2>
+
+                      {isSharpPick(pick) && (
+                        <span className="rounded-full bg-green-500/20 px-3 py-1 text-xs font-semibold text-green-300">
+                          🔥 Sharp Pick
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="mt-1 text-lg text-gray-300">{pick.game}</p>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="text-sm text-gray-400">Odds</div>
+                    <div className="text-3xl font-bold">
+                      {formatOdds(pick.odds)}
+                    </div>
+                  </div>
                 </div>
 
-                <div className="text-right">
-                  <p className="text-sm text-zinc-400">Odds</p>
-                  <p className="text-lg font-bold">{pick.odds ?? 'N/A'}</p>
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <div className="text-sm text-gray-400">Confidence</div>
+                    <div className="text-3xl font-semibold">
+                      {formatConfidence(pick.confidence)}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <div className="text-sm text-gray-400">Stake</div>
+                    <div className="text-3xl font-semibold">
+                      {pick.stake ?? '—'}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <div className="text-sm text-gray-400">Result</div>
+                    <div className="text-3xl font-semibold capitalize">
+                      {pick.result || 'pending'}
+                    </div>
+                  </div>
                 </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-4">
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <div className="text-sm text-gray-400">Sportsbook</div>
+                    <div className="text-2xl font-semibold">
+                      {pick.sportsbook || '—'}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <div className="text-sm text-gray-400">Edge</div>
+                    <div
+                      className={`text-2xl font-semibold ${getEdgeColor(
+                        pick.edge
+                      )}`}
+                    >
+                      {formatPercent(pick.edge)}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <div className="text-sm text-gray-400">EV</div>
+                    <div
+                      className={`text-2xl font-semibold ${getEvColor(
+                        pick.ev
+                      )}`}
+                    >
+                      {formatPercent(pick.ev)}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <div className="text-sm text-gray-400">Created</div>
+                    <div className="text-xl font-semibold">
+                      {formatCreatedAt(pick.created_at)}
+                    </div>
+                  </div>
+                </div>
+
+                {pick.analysis && (
+                  <div className="mt-4 rounded-2xl bg-white/5 p-4">
+                    <div className="mb-2 text-sm text-gray-400">Analysis</div>
+                    <p className="text-lg leading-8 text-gray-200">
+                      {pick.analysis}
+                    </p>
+                  </div>
+                )}
               </div>
-
-              <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                <div className="rounded-xl bg-zinc-800 p-3">
-                  <p className="text-xs text-zinc-400">Confidence</p>
-                  <p>{pick.confidence ?? 'N/A'}</p>
-                </div>
-
-                <div className="rounded-xl bg-zinc-800 p-3">
-                  <p className="text-xs text-zinc-400">Stake</p>
-                  <p>{pick.stake ?? 'N/A'}</p>
-                </div>
-
-                <div className="rounded-xl bg-zinc-800 p-3">
-                  <p className="text-xs text-zinc-400">Result</p>
-                  <p>{pick.result ?? 'pending'}</p>
-                </div>
-              </div>
-
-              <div className="mt-4 grid gap-2 sm:grid-cols-4">
-                <div className="rounded-xl bg-zinc-800 p-3">
-                  <p className="text-xs text-zinc-400">Sportsbook</p>
-                  <p>{pick.sportsbook ?? 'N/A'}</p>
-                </div>
-
-                <div className="rounded-xl bg-zinc-800 p-3">
-                  <p className="text-xs text-zinc-400">Edge</p>
-                  <p>{pick.edge ?? 'N/A'}</p>
-                </div>
-
-                <div className="rounded-xl bg-zinc-800 p-3">
-                  <p className="text-xs text-zinc-400">EV</p>
-                  <p>{pick.ev ?? 'N/A'}</p>
-                </div>
-
-                <div className="rounded-xl bg-zinc-800 p-3">
-                  <p className="text-xs text-zinc-400">Created</p>
-                  <p>
-                    {pick.created_at
-                      ? new Date(pick.created_at).toLocaleString()
-                      : 'N/A'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-xl bg-zinc-800 p-3">
-                <p className="text-xs text-zinc-400 mb-1">Analysis</p>
-                <p className="text-zinc-200">
-                  {pick.analysis ?? 'No analysis available yet.'}
-                </p>
-              </div>
-            </div>
-          ))}
+            ))}
         </div>
       </div>
     </main>
