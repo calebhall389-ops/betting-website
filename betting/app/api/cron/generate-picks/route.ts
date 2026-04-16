@@ -3,6 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
+/* ================================
+   Types
+================================ */
 type OddsOutcome = {
   name: string;
   price: number;
@@ -45,17 +48,25 @@ type CandidatePick = {
   analysis: string;
 };
 
+/* ================================
+   Supabase Client
+================================ */
 function getSupabase() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.SUPABASE_URL!;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
   if (!url || !key) {
-    throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+    throw new Error(
+      'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY'
+    );
   }
 
   return createClient(url, key);
 }
 
+/* ================================
+   Odds + Math Utilities
+================================ */
 function americanToImpliedProbability(odds: number): number {
   if (odds > 0) {
     return 100 / (odds + 100);
@@ -73,22 +84,26 @@ function americanToDecimal(odds: number): number {
 function calcEV(modelProbability: number, odds: number): number {
   const decimalOdds = americanToDecimal(odds);
   const profitPerUnit = decimalOdds - 1;
-
   return modelProbability * profitPerUnit - (1 - modelProbability);
 }
 
 function calcNoVigProbabilities(
-  outcomeAOdds: number,
-  outcomeBOdds: number
+  oddsA: number,
+  oddsB: number
 ): { a: number; b: number } {
-  const rawA = americanToImpliedProbability(outcomeAOdds);
-  const rawB = americanToImpliedProbability(outcomeBOdds);
-  const total = rawA + rawB;
+  const pA = americanToImpliedProbability(oddsA);
+  const pB = americanToImpliedProbability(oddsB);
+  const total = pA + pB;
 
   return {
-    a: rawA / total,
-    b: rawB / total,
+    a: pA / total,
+    b: pB / total,
   };
+}
+
+function average(numbers: number[]): number {
+  if (!numbers.length) return 0;
+  return numbers.reduce((sum, n) => sum + n, 0) / numbers.length;
 }
 
 function normalizeSportName(sportTitle: string): string {
@@ -99,6 +114,9 @@ function normalizeSportName(sportTitle: string): string {
     .replace('Ice Hockey', 'NHL');
 }
 
+/* ================================
+   Pick Logic
+================================ */
 function getConfidence(edge: number, ev: number): string | null {
   if (edge >= 0.10 && ev >= 0.08) return '5-star';
   if (edge >= 0.08 && ev >= 0.06) return '4-star';
@@ -116,7 +134,6 @@ function buildAnalysis(input: {
   pick: string;
   sportsbook: string;
   odds: number;
-  impliedProbability: number;
   noVigProbability: number;
   modelProbability: number;
   edge: number;
@@ -127,7 +144,7 @@ function buildAnalysis(input: {
   const edgePct = (input.edge * 100).toFixed(1);
   const evPct = (input.ev * 100).toFixed(1);
 
-  return `${input.pick} stands out because the model projects it at ${modelPct}% versus a no-vig market estimate of ${marketPct}%. At ${input.odds} on ${input.sportsbook}, that creates a ${edgePct}% edge and approximately ${evPct}% expected value, which is strong enough to clear the posting threshold.`;
+  return `${input.pick} is priced at ${input.odds} on ${input.sportsbook}. The model projects a ${modelPct}% win probability versus a no-vig market estimate of ${marketPct}%, creating a ${edgePct}% edge and ${evPct}% expected value.`;
 }
 
 function getPreferredBookmakers() {
@@ -142,6 +159,9 @@ function getPreferredBookmakers() {
   ]);
 }
 
+/* ================================
+   Fetch Odds
+================================ */
 async function fetchOdds(): Promise<OddsEvent[]> {
   const apiKey = process.env.ODDS_API_KEY;
   if (!apiKey) {
@@ -174,11 +194,9 @@ async function fetchOdds(): Promise<OddsEvent[]> {
   return allEvents;
 }
 
-function average(numbers: number[]): number {
-  if (!numbers.length) return 0;
-  return numbers.reduce((sum, n) => sum + n, 0) / numbers.length;
-}
-
+/* ================================
+   Build Candidates
+================================ */
 function buildCandidates(events: OddsEvent[]): CandidatePick[] {
   const preferredBooks = getPreferredBookmakers();
   const candidates: CandidatePick[] = [];
@@ -197,57 +215,45 @@ function buildCandidates(events: OddsEvent[]): CandidatePick[] {
       name: string;
       prices: number[];
       books: string[];
-      oppositePrices: number[];
       noVigProbs: number[];
     };
 
     const sideMap = new Map<string, SideData>();
 
     for (const book of filteredBooks) {
-      const h2hMarket = book.markets?.find((m) => m.key === 'h2h');
-      if (!h2hMarket || h2hMarket.outcomes.length !== 2) continue;
+      const market = book.markets?.find((m) => m.key === 'h2h');
+      if (!market || market.outcomes.length !== 2) continue;
 
-      const [outcomeA, outcomeB] = h2hMarket.outcomes;
+      const [a, b] = market.outcomes;
+      const noVig = calcNoVigProbabilities(a.price, b.price);
 
-      if (
-        typeof outcomeA?.price !== 'number' ||
-        typeof outcomeB?.price !== 'number'
-      ) {
-        continue;
-      }
-
-      const noVig = calcNoVigProbabilities(outcomeA.price, outcomeB.price);
-
-      const existingA = sideMap.get(outcomeA.name) ?? {
-        name: outcomeA.name,
+      const sideA = sideMap.get(a.name) || {
+        name: a.name,
         prices: [],
         books: [],
-        oppositePrices: [],
         noVigProbs: [],
       };
 
-      existingA.prices.push(outcomeA.price);
-      existingA.books.push(book.title);
-      existingA.oppositePrices.push(outcomeB.price);
-      existingA.noVigProbs.push(noVig.a);
-      sideMap.set(outcomeA.name, existingA);
+      sideA.prices.push(a.price);
+      sideA.books.push(book.title);
+      sideA.noVigProbs.push(noVig.a);
+      sideMap.set(a.name, sideA);
 
-      const existingB = sideMap.get(outcomeB.name) ?? {
-        name: outcomeB.name,
+      const sideB = sideMap.get(b.name) || {
+        name: b.name,
         prices: [],
         books: [],
-        oppositePrices: [],
         noVigProbs: [],
       };
 
-      existingB.prices.push(outcomeB.price);
-      existingB.books.push(book.title);
-      existingB.oppositePrices.push(outcomeA.price);
-      existingB.noVigProbs.push(noVig.b);
-      sideMap.set(outcomeB.name, existingB);
+      sideB.prices.push(b.price);
+      sideB.books.push(book.title);
+      sideB.noVigProbs.push(noVig.b);
+      sideMap.set(b.name, sideB);
     }
 
-    for (const [, side] of sideMap) {
+    // ✅ QUICK FIX: Avoid Map iteration error
+    for (const side of Array.from(sideMap.values())) {
       if (side.prices.length < 2) continue;
 
       const bestLine = side.prices.reduce((best, current) => {
@@ -256,32 +262,34 @@ function buildCandidates(events: OddsEvent[]): CandidatePick[] {
         return currentDecimal > bestDecimal ? current : best;
       });
 
-      const bestIndex = side.prices.findIndex((p) => p === bestLine);
+      const bestIndex = side.prices.indexOf(bestLine);
       const bestBook = side.books[bestIndex] ?? 'Best Available';
 
-      const impliedProbability = americanToImpliedProbability(bestLine);
+      const impliedProbability =
+        americanToImpliedProbability(bestLine);
+
       const avgNoVigProbability = average(side.noVigProbs);
 
-      // Model probability:
-      // start from no-vig market baseline, then only add a small controlled edge
-      // based on price improvement versus consensus.
       const consensusImplied = average(
-        side.prices.map((price) => americanToImpliedProbability(price))
+        side.prices.map((price) =>
+          americanToImpliedProbability(price)
+        )
       );
 
-      const priceEdge = Math.max(0, consensusImplied - impliedProbability);
+      const priceEdge = Math.max(
+        0,
+        consensusImplied - impliedProbability
+      );
 
-      // Controlled bump so the model is selective and does not spam weak picks.
       const modelProbability = Math.min(
         avgNoVigProbability + priceEdge * 1.35 + 0.015,
-        0.80
+        0.8
       );
 
       const edge = modelProbability - avgNoVigProbability;
       const ev = calcEV(modelProbability, bestLine);
       const confidence = getConfidence(edge, ev);
 
-      // Hard filters to make picks sharper
       const enoughBooks = side.prices.length >= 3;
       const lineSpread =
         Math.max(...side.prices.map(americanToDecimal)) -
@@ -294,10 +302,7 @@ function buildCandidates(events: OddsEvent[]): CandidatePick[] {
       if (ev < 0.04) continue;
       if (!confidence) continue;
 
-      const pickLabel =
-        side.name === event.home_team || side.name === event.away_team
-          ? `${side.name} ML`
-          : side.name;
+      const pickLabel = `${side.name} ML`;
 
       candidates.push({
         sport,
@@ -316,7 +321,6 @@ function buildCandidates(events: OddsEvent[]): CandidatePick[] {
           pick: pickLabel,
           sportsbook: bestBook,
           odds: bestLine,
-          impliedProbability,
           noVigProbability: avgNoVigProbability,
           modelProbability,
           edge,
@@ -329,18 +333,17 @@ function buildCandidates(events: OddsEvent[]): CandidatePick[] {
   return candidates;
 }
 
+/* ================================
+   API Route
+================================ */
 export async function GET() {
   try {
     const supabase = getSupabase();
-
     const events = await fetchOdds();
     const candidates = buildCandidates(events);
 
     const finalPicks = candidates
-      .sort((a, b) => {
-        if (b.ev !== a.ev) return b.ev - a.ev;
-        return b.edge - a.edge;
-      })
+      .sort((a, b) => b.ev - a.ev)
       .slice(0, 5);
 
     if (!finalPicks.length) {
@@ -364,8 +367,12 @@ export async function GET() {
       edge: Number((pick.edge * 100).toFixed(2)),
       ev: Number((pick.ev * 100).toFixed(2)),
       sportsbook: pick.sportsbook,
-      model_probability: Number((pick.modelProbability * 100).toFixed(2)),
-      market_probability: Number((pick.noVigProbability * 100).toFixed(2)),
+      model_probability: Number(
+        (pick.modelProbability * 100).toFixed(2)
+      ),
+      market_probability: Number(
+        (pick.noVigProbability * 100).toFixed(2)
+      ),
     }));
 
     const { data, error } = await supabase
@@ -380,13 +387,16 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       inserted: data?.length ?? 0,
-      picks: data ?? rowsToInsert,
+      picks: data,
     });
   } catch (error) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Unknown error',
       },
       { status: 500 }
     );
