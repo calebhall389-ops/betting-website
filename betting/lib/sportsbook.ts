@@ -1,9 +1,3 @@
-// lib/sportsbooks.ts
-
-/**
- * Major sportsbooks used across the application.
- * These must match the bookmakers used in lib/odds-api.ts.
- */
 export const MAJOR_BOOKMAKERS = [
   'draftkings',
   'fanduel',
@@ -16,10 +10,6 @@ export const MAJOR_BOOKMAKERS = [
 
 export const MAJOR_BOOK_SET = new Set<string>(MAJOR_BOOKMAKERS);
 
-/**
- * Supported sports for odds and picks generation.
- * These should align with ALLOWED_SPORT_KEYS in odds-api.ts.
- */
 export const MAJOR_SPORTS = [
   'baseball_mlb',
   'basketball_nba',
