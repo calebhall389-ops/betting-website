@@ -139,14 +139,14 @@ function findBestLine(game: OddsGame) {
       const ev = calcEV(winProb, outcome.price);
 
       if (!bestPick || ev > bestPick.ev) {
-     bestPick = {
-  side: outcome.name,
-  book: book.title,
-  bookKey: book.key,
-  odds: outcome.price,
-  winProb,
-  ev,
-};
+        bestPick = {
+          side: outcome.name,
+          book: book.title,
+          bookKey: book.key,
+          odds: outcome.price,
+          winProb,
+          ev,
+        };
       }
     }
   }
@@ -228,6 +228,13 @@ export async function GET(req: NextRequest) {
             ? Number(((stake * best.odds) / 100).toFixed(2))
             : Number(((stake * 100) / Math.abs(best.odds)).toFixed(2));
 
+        const impliedProb = americanToImpliedProbability(best.odds);
+        const evPercent = Number((best.ev * 100).toFixed(2));
+        const modelProbPercent = Number((best.winProb * 100).toFixed(2));
+        const impliedProbPercent = Number((impliedProb * 100).toFixed(2));
+
+        const analysis = `Positive EV of ${evPercent}%. Model win probability is ${modelProbPercent}% versus market implied probability of ${impliedProbPercent}%. Best available price is at ${best.book}.`;
+
         const { data: existing } = await supabase
           .from('picks')
           .select('id')
@@ -237,20 +244,22 @@ export async function GET(req: NextRequest) {
           .maybeSingle();
 
         if (existing) continue;
-const row = {
-  sport: game.sport_title,
-  game: gameLabel,
-  pick: pickText,
-  odds: best.odds,
-  sportsbook: best.book,
-  sportsbook_key: best.bookKey,
-  stake,
-  to_win: toWin,
-  status: 'pending',
-  ev: Number((best.ev * 100).toFixed(2)),
-  model_prob: Number((best.winProb * 100).toFixed(2)),
-  commence_time: game.commence_time,
-};
+
+        const row = {
+          sport: game.sport_title,
+          game: gameLabel,
+          pick: pickText,
+          odds: best.odds,
+          sportsbook: best.book,
+          sportsbook_key: best.bookKey,
+          stake,
+          to_win: toWin,
+          status: 'pending',
+          ev: evPercent,
+          model_prob: modelProbPercent,
+          commence_time: game.commence_time,
+          analysis,
+        };
 
         const { data, error } = await supabase
           .from('picks')
