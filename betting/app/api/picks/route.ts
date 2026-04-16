@@ -4,8 +4,12 @@ import { createClient } from '@supabase/supabase-js';
 export const dynamic = 'force-dynamic';
 
 function getSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anonKey) {
+    throw new Error('Missing Supabase env vars');
+  }
 
   return createClient(url, anonKey, {
     auth: {
@@ -32,9 +36,11 @@ export async function GET() {
       success: true,
       picks: data ?? [],
     });
-  } catch (error: any) {
+  } catch (error) {
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch picks' },
+      {
+        error: error instanceof Error ? error.message : 'Failed to fetch picks',
+      },
       { status: 500 }
     );
   }
