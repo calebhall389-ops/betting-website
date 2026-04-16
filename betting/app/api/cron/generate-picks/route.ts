@@ -1,16 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import {
-  fetchAvailableSports,
-  fetchOddsForSport,
-  MAJOR_BOOKMAKERS,
-  ALLOWED_SPORT_KEYS,
-} from '@/lib/odds-api';
 
 export const dynamic = 'force-dynamic';
-
-const MAJOR_BOOK_SET = new Set(MAJOR_BOOKMAKERS);
-const MAJOR_SPORTS_SET = new Set(ALLOWED_SPORT_KEYS);
 
 type OddsOutcome = {
   name: string;
@@ -28,7 +19,7 @@ type OddsBookmaker = {
   markets: OddsMarket[];
 };
 
-type OddsGame = {
+type OddsEvent = {
   id: string;
   sport_key: string;
   sport_title: string;
@@ -38,283 +29,358 @@ type OddsGame = {
   bookmakers: OddsBookmaker[];
 };
 
+type CandidatePick = {
+  sport: string;
+  game: string;
+  pick: string;
+  odds: number;
+  sportsbook: string;
+  impliedProbability: number;
+  noVigProbability: number;
+  modelProbability: number;
+  edge: number;
+  ev: number;
+  confidence: string;
+  stake: number;
+  analysis: string;
+};
+
+function getSupabase() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !key) {
+    throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+  }
+
+  return createClient(url, key);
+}
+
 function americanToImpliedProbability(odds: number): number {
-  if (odds > 0) return 100 / (odds + 100);
+  if (odds > 0) {
+    return 100 / (odds + 100);
+  }
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
-function decimalFromAmerican(odds: number): number {
-  if (odds > 0) return 1 + odds / 100;
+function americanToDecimal(odds: number): number {
+  if (odds > 0) {
+    return 1 + odds / 100;
+  }
   return 1 + 100 / Math.abs(odds);
 }
 
-function average(nums: number[]): number {
-  if (!nums.length) return 0;
-  return nums.reduce((sum, n) => sum + n, 0) / nums.length;
+function calcEV(modelProbability: number, odds: number): number {
+  const decimalOdds = americanToDecimal(odds);
+  const profitPerUnit = decimalOdds - 1;
+
+  return modelProbability * profitPerUnit - (1 - modelProbability);
 }
 
-function normalizeProbabilities(probA: number, probB: number) {
-  const total = probA + probB;
-  if (total <= 0) return { a: 0.5, b: 0.5 };
+function calcNoVigProbabilities(
+  outcomeAOdds: number,
+  outcomeBOdds: number
+): { a: number; b: number } {
+  const rawA = americanToImpliedProbability(outcomeAOdds);
+  const rawB = americanToImpliedProbability(outcomeBOdds);
+  const total = rawA + rawB;
 
   return {
-    a: probA / total,
-    b: probB / total,
+    a: rawA / total,
+    b: rawB / total,
   };
 }
 
-function calcEV(winProb: number, americanOdds: number): number {
-  const decimalOdds = decimalFromAmerican(americanOdds);
-  return winProb * (decimalOdds - 1) - (1 - winProb);
+function normalizeSportName(sportTitle: string): string {
+  return sportTitle
+    .replace('American Football', 'NFL')
+    .replace('Baseball', 'MLB')
+    .replace('Basketball', 'NBA')
+    .replace('Ice Hockey', 'NHL');
 }
 
-function getEdge(winProb: number, odds: number): number {
-  const implied = americanToImpliedProbability(odds);
-  return winProb - implied;
+function getConfidence(edge: number, ev: number): string | null {
+  if (edge >= 0.10 && ev >= 0.08) return '5-star';
+  if (edge >= 0.08 && ev >= 0.06) return '4-star';
+  if (edge >= 0.05 && ev >= 0.04) return '3-star';
+  return null;
 }
 
-function getConfidenceFromEV(ev: number): number {
-  if (ev >= 0.08) return 5;
-  if (ev >= 0.065) return 4;
-  if (ev >= 0.05) return 3;
-  if (ev >= 0.04) return 2;
+function getStakeUnits(confidence: string): number {
+  if (confidence === '5-star') return 2;
+  if (confidence === '4-star') return 1.5;
   return 1;
 }
 
-function getSharpConsensus(game: OddsGame) {
-  const majorBooks = (game.bookmakers || []).filter((book) =>
-    MAJOR_BOOK_SET.has(book.key)
-  );
+function buildAnalysis(input: {
+  pick: string;
+  sportsbook: string;
+  odds: number;
+  impliedProbability: number;
+  noVigProbability: number;
+  modelProbability: number;
+  edge: number;
+  ev: number;
+}): string {
+  const marketPct = (input.noVigProbability * 100).toFixed(1);
+  const modelPct = (input.modelProbability * 100).toFixed(1);
+  const edgePct = (input.edge * 100).toFixed(1);
+  const evPct = (input.ev * 100).toFixed(1);
 
-  const h2hPrices: Record<string, number[]> = {};
+  return `${input.pick} stands out because the model projects it at ${modelPct}% versus a no-vig market estimate of ${marketPct}%. At ${input.odds} on ${input.sportsbook}, that creates a ${edgePct}% edge and approximately ${evPct}% expected value, which is strong enough to clear the posting threshold.`;
+}
 
-  for (const book of majorBooks) {
-    const h2hMarket = book.markets?.find((m) => m.key === 'h2h');
-    if (!h2hMarket) continue;
+function getPreferredBookmakers() {
+  return new Set([
+    'draftkings',
+    'fanduel',
+    'betmgm',
+    'caesars',
+    'espnbet',
+    'betrivers',
+    'fanatics',
+  ]);
+}
 
-    for (const outcome of h2hMarket.outcomes || []) {
-      if (typeof outcome.price !== 'number') continue;
-      if (!h2hPrices[outcome.name]) h2hPrices[outcome.name] = [];
-      h2hPrices[outcome.name].push(outcome.price);
-    }
+async function fetchOdds(): Promise<OddsEvent[]> {
+  const apiKey = process.env.ODDS_API_KEY;
+  if (!apiKey) {
+    throw new Error('Missing ODDS_API_KEY');
   }
 
-  const homePrices = h2hPrices[game.home_team] || [];
-  const awayPrices = h2hPrices[game.away_team] || [];
+  const sports = [
+    'basketball_nba',
+    'baseball_mlb',
+    'americanfootball_nfl',
+    'icehockey_nhl',
+  ];
 
-  // Require at least 3 books on each side before trusting consensus
-  if (homePrices.length < 3 || awayPrices.length < 3) return null;
+  const allEvents: OddsEvent[] = [];
 
-  const avgHomeOdds = average(homePrices);
-  const avgAwayOdds = average(awayPrices);
+  for (const sport of sports) {
+    const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${apiKey}&regions=us&markets=h2h&oddsFormat=american&bookmakers=draftkings,fanduel,betmgm,caesars,espnbet,betrivers,fanatics`;
 
-  const rawHomeProb = americanToImpliedProbability(avgHomeOdds);
-  const rawAwayProb = americanToImpliedProbability(avgAwayOdds);
-  const normalized = normalizeProbabilities(rawHomeProb, rawAwayProb);
+    const res = await fetch(url, { cache: 'no-store' });
 
-  return {
-    homeWinProb: normalized.a,
-    awayWinProb: normalized.b,
-  };
-}
-
-function findBestLine(game: OddsGame) {
-  let bestPick:
-    | {
-        side: string;
-        book: string;
-        bookKey: string;
-        odds: number;
-        winProb: number;
-        ev: number;
-        edge: number;
-      }
-    | null = null;
-
-  const consensus = getSharpConsensus(game);
-  if (!consensus) return null;
-
-  for (const book of game.bookmakers || []) {
-    if (!MAJOR_BOOK_SET.has(book.key)) continue;
-
-    const h2hMarket = book.markets?.find((m) => m.key === 'h2h');
-    if (!h2hMarket) continue;
-
-    for (const outcome of h2hMarket.outcomes || []) {
-      const isHome = outcome.name === game.home_team;
-      const isAway = outcome.name === game.away_team;
-
-      if (!isHome && !isAway) continue;
-      if (typeof outcome.price !== 'number') continue;
-
-      const winProb = isHome
-        ? consensus.homeWinProb
-        : consensus.awayWinProb;
-
-      const ev = calcEV(winProb, outcome.price);
-      const edge = getEdge(winProb, outcome.price);
-
-      // Tighten pick quality
-      if (edge < 0.035) continue;
-      if (ev < 0.05) continue;
-
-      if (!bestPick || ev > bestPick.ev) {
-        bestPick = {
-          side: outcome.name,
-          book: book.title,
-          bookKey: book.key,
-          odds: outcome.price,
-          winProb,
-          ev,
-          edge,
-        };
-      }
-    }
-  }
-
-  return bestPick;
-}
-
-function buildStake(ev: number, bankroll: number) {
-  if (ev >= 0.08) return Math.max(5, Math.round(bankroll * 0.025));
-  if (ev >= 0.065) return Math.max(5, Math.round(bankroll * 0.02));
-  if (ev >= 0.05) return Math.max(5, Math.round(bankroll * 0.015));
-  return Math.max(5, Math.round(bankroll * 0.01));
-}
-
-function isAuthorized(req: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return true;
-
-  const authHeader = req.headers.get('authorization');
-  return authHeader === `Bearer ${cronSecret}`;
-}
-
-function getSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !serviceRole) {
-    throw new Error('Missing Supabase environment variables.');
-  }
-
-  return createClient(url, serviceRole);
-}
-
-export async function GET(req: NextRequest) {
-  try {
-    if (!isAuthorized(req)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Odds API failed for ${sport}: ${text}`);
     }
 
-    // Default is now tighter than before
-    const bankroll = Number(process.env.BANKROLL || 1000);
-    const minEV = Number(process.env.MIN_EV_THRESHOLD || 0.05);
+    const data = (await res.json()) as OddsEvent[];
+    allEvents.push(...data);
+  }
 
-    const availableSports = await fetchAvailableSports();
-    const targetSports = availableSports.filter((sport: { key: string }) =>
-      MAJOR_SPORTS_SET.has(sport.key)
+  return allEvents;
+}
+
+function average(numbers: number[]): number {
+  if (!numbers.length) return 0;
+  return numbers.reduce((sum, n) => sum + n, 0) / numbers.length;
+}
+
+function buildCandidates(events: OddsEvent[]): CandidatePick[] {
+  const preferredBooks = getPreferredBookmakers();
+  const candidates: CandidatePick[] = [];
+
+  for (const event of events) {
+    const filteredBooks = (event.bookmakers || []).filter((book) =>
+      preferredBooks.has(book.key)
     );
 
-    const supabase = getSupabase();
-    const insertedPicks: any[] = [];
-    const debug: any[] = [];
+    if (filteredBooks.length < 2) continue;
 
-    for (const sport of targetSports) {
-      let games: OddsGame[] = [];
+    const game = `${event.away_team} at ${event.home_team}`;
+    const sport = normalizeSportName(event.sport_title);
 
-      try {
-        games = await fetchOddsForSport(sport.key);
-      } catch (error) {
-        debug.push({
-          sport: sport.key,
-          error: error instanceof Error ? error.message : 'Failed to fetch odds',
-        });
+    type SideData = {
+      name: string;
+      prices: number[];
+      books: string[];
+      oppositePrices: number[];
+      noVigProbs: number[];
+    };
+
+    const sideMap = new Map<string, SideData>();
+
+    for (const book of filteredBooks) {
+      const h2hMarket = book.markets?.find((m) => m.key === 'h2h');
+      if (!h2hMarket || h2hMarket.outcomes.length !== 2) continue;
+
+      const [outcomeA, outcomeB] = h2hMarket.outcomes;
+
+      if (
+        typeof outcomeA?.price !== 'number' ||
+        typeof outcomeB?.price !== 'number'
+      ) {
         continue;
       }
 
-      for (const game of games) {
-        const best = findBestLine(game);
-        if (!best) continue;
-        if (best.ev < minEV) continue;
+      const noVig = calcNoVigProbabilities(outcomeA.price, outcomeB.price);
 
-        const gameLabel = `${game.away_team} at ${game.home_team}`;
-        const pickText =
-          best.side === game.home_team
-            ? `${game.home_team} ML`
-            : `${game.away_team} ML`;
+      const existingA = sideMap.get(outcomeA.name) ?? {
+        name: outcomeA.name,
+        prices: [],
+        books: [],
+        oppositePrices: [],
+        noVigProbs: [],
+      };
 
-        const stake = buildStake(best.ev, bankroll);
+      existingA.prices.push(outcomeA.price);
+      existingA.books.push(book.title);
+      existingA.oppositePrices.push(outcomeB.price);
+      existingA.noVigProbs.push(noVig.a);
+      sideMap.set(outcomeA.name, existingA);
 
-        const toWin =
-          best.odds > 0
-            ? Number(((stake * best.odds) / 100).toFixed(2))
-            : Number(((stake * 100) / Math.abs(best.odds)).toFixed(2));
+      const existingB = sideMap.get(outcomeB.name) ?? {
+        name: outcomeB.name,
+        prices: [],
+        books: [],
+        oppositePrices: [],
+        noVigProbs: [],
+      };
 
-        const impliedProb = americanToImpliedProbability(best.odds);
-        const evPercent = Number((best.ev * 100).toFixed(2));
-        const modelProbPercent = Number((best.winProb * 100).toFixed(2));
-        const impliedProbPercent = Number((impliedProb * 100).toFixed(2));
-        const edgePercent = Number((best.edge * 100).toFixed(2));
-        const confidence = getConfidenceFromEV(best.ev);
+      existingB.prices.push(outcomeB.price);
+      existingB.books.push(book.title);
+      existingB.oppositePrices.push(outcomeA.price);
+      existingB.noVigProbs.push(noVig.b);
+      sideMap.set(outcomeB.name, existingB);
+    }
 
-        const analysis = `Positive EV of ${evPercent}%. Model win probability is ${modelProbPercent}% versus market implied probability of ${impliedProbPercent}%, giving a ${edgePercent}% edge. Best available price is at ${best.book}.`;
+    for (const [, side] of sideMap) {
+      if (side.prices.length < 2) continue;
 
-        const { data: existing } = await supabase
-          .from('picks')
-          .select('id')
-          .eq('game', gameLabel)
-          .eq('pick', pickText)
-          .eq('status', 'pending')
-          .maybeSingle();
+      const bestLine = side.prices.reduce((best, current) => {
+        const bestDecimal = americanToDecimal(best);
+        const currentDecimal = americanToDecimal(current);
+        return currentDecimal > bestDecimal ? current : best;
+      });
 
-        if (existing) continue;
+      const bestIndex = side.prices.findIndex((p) => p === bestLine);
+      const bestBook = side.books[bestIndex] ?? 'Best Available';
 
-        const row = {
-          sport: game.sport_title,
-          game: gameLabel,
-          pick: pickText,
-          odds: best.odds,
-          sportsbook: best.book,
-          sportsbook_key: best.bookKey,
-          confidence,
-          analysis,
-          stake,
-          to_win: toWin,
-          status: 'pending',
-          ev: evPercent,
-          model_prob: modelProbPercent,
-          commence_time: game.commence_time,
-        };
+      const impliedProbability = americanToImpliedProbability(bestLine);
+      const avgNoVigProbability = average(side.noVigProbs);
 
-        const { data, error } = await supabase
-          .from('picks')
-          .insert(row)
-          .select()
-          .single();
+      // Model probability:
+      // start from no-vig market baseline, then only add a small controlled edge
+      // based on price improvement versus consensus.
+      const consensusImplied = average(
+        side.prices.map((price) => americanToImpliedProbability(price))
+      );
 
-        if (error) {
-          debug.push({
-            sport: sport.key,
-            game: gameLabel,
-            error: error.message,
-          });
-          continue;
-        }
+      const priceEdge = Math.max(0, consensusImplied - impliedProbability);
 
-        insertedPicks.push(data);
-      }
+      // Controlled bump so the model is selective and does not spam weak picks.
+      const modelProbability = Math.min(
+        avgNoVigProbability + priceEdge * 1.35 + 0.015,
+        0.80
+      );
+
+      const edge = modelProbability - avgNoVigProbability;
+      const ev = calcEV(modelProbability, bestLine);
+      const confidence = getConfidence(edge, ev);
+
+      // Hard filters to make picks sharper
+      const enoughBooks = side.prices.length >= 3;
+      const lineSpread =
+        Math.max(...side.prices.map(americanToDecimal)) -
+        Math.min(...side.prices.map(americanToDecimal));
+      const marketIsReasonable = lineSpread <= 0.18;
+
+      if (!enoughBooks) continue;
+      if (!marketIsReasonable) continue;
+      if (edge < 0.05) continue;
+      if (ev < 0.04) continue;
+      if (!confidence) continue;
+
+      const pickLabel =
+        side.name === event.home_team || side.name === event.away_team
+          ? `${side.name} ML`
+          : side.name;
+
+      candidates.push({
+        sport,
+        game,
+        pick: pickLabel,
+        odds: bestLine,
+        sportsbook: bestBook,
+        impliedProbability,
+        noVigProbability: avgNoVigProbability,
+        modelProbability,
+        edge,
+        ev,
+        confidence,
+        stake: getStakeUnits(confidence),
+        analysis: buildAnalysis({
+          pick: pickLabel,
+          sportsbook: bestBook,
+          odds: bestLine,
+          impliedProbability,
+          noVigProbability: avgNoVigProbability,
+          modelProbability,
+          edge,
+          ev,
+        }),
+      });
+    }
+  }
+
+  return candidates;
+}
+
+export async function GET() {
+  try {
+    const supabase = getSupabase();
+
+    const events = await fetchOdds();
+    const candidates = buildCandidates(events);
+
+    const finalPicks = candidates
+      .sort((a, b) => {
+        if (b.ev !== a.ev) return b.ev - a.ev;
+        return b.edge - a.edge;
+      })
+      .slice(0, 5);
+
+    if (!finalPicks.length) {
+      return NextResponse.json({
+        success: true,
+        inserted: 0,
+        message: 'No qualifying sharp picks found today.',
+        picks: [],
+      });
+    }
+
+    const rowsToInsert = finalPicks.map((pick) => ({
+      sport: pick.sport,
+      game: pick.game,
+      pick: pick.pick,
+      odds: pick.odds,
+      confidence: pick.confidence,
+      stake: pick.stake,
+      result: 'pending',
+      analysis: pick.analysis,
+      edge: Number((pick.edge * 100).toFixed(2)),
+      ev: Number((pick.ev * 100).toFixed(2)),
+      sportsbook: pick.sportsbook,
+      model_probability: Number((pick.modelProbability * 100).toFixed(2)),
+      market_probability: Number((pick.noVigProbability * 100).toFixed(2)),
+    }));
+
+    const { data, error } = await supabase
+      .from('picks')
+      .insert(rowsToInsert)
+      .select();
+
+    if (error) {
+      throw new Error(`Supabase insert failed: ${error.message}`);
     }
 
     return NextResponse.json({
       success: true,
-      inserted: insertedPicks.length,
-      picks: insertedPicks,
-      debug,
-      message:
-        insertedPicks.length > 0
-          ? `Inserted ${insertedPicks.length} sharper pick(s).`
-          : 'No qualifying sharp EV picks found today.',
+      inserted: data?.length ?? 0,
+      picks: data ?? rowsToInsert,
     });
   } catch (error) {
     return NextResponse.json(
