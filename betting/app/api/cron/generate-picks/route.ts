@@ -68,6 +68,19 @@ function calcEV(winProb: number, americanOdds: number): number {
   return winProb * (decimalOdds - 1) - (1 - winProb);
 }
 
+function getEdge(winProb: number, odds: number): number {
+  const implied = americanToImpliedProbability(odds);
+  return winProb - implied;
+}
+
+function getConfidenceFromEV(ev: number): number {
+  if (ev >= 0.08) return 5;
+  if (ev >= 0.065) return 4;
+  if (ev >= 0.05) return 3;
+  if (ev >= 0.04) return 2;
+  return 1;
+}
+
 function getSharpConsensus(game: OddsGame) {
   const majorBooks = (game.bookmakers || []).filter((book) =>
     MAJOR_BOOK_SET.has(book.key)
@@ -89,7 +102,8 @@ function getSharpConsensus(game: OddsGame) {
   const homePrices = h2hPrices[game.home_team] || [];
   const awayPrices = h2hPrices[game.away_team] || [];
 
-  if (!homePrices.length || !awayPrices.length) return null;
+  // Require at least 3 books on each side before trusting consensus
+  if (homePrices.length < 3 || awayPrices.length < 3) return null;
 
   const avgHomeOdds = average(homePrices);
   const avgAwayOdds = average(awayPrices);
@@ -113,6 +127,7 @@ function findBestLine(game: OddsGame) {
         odds: number;
         winProb: number;
         ev: number;
+        edge: number;
       }
     | null = null;
 
@@ -137,6 +152,11 @@ function findBestLine(game: OddsGame) {
         : consensus.awayWinProb;
 
       const ev = calcEV(winProb, outcome.price);
+      const edge = getEdge(winProb, outcome.price);
+
+      // Tighten pick quality
+      if (edge < 0.035) continue;
+      if (ev < 0.05) continue;
 
       if (!bestPick || ev > bestPick.ev) {
         bestPick = {
@@ -146,6 +166,7 @@ function findBestLine(game: OddsGame) {
           odds: outcome.price,
           winProb,
           ev,
+          edge,
         };
       }
     }
@@ -155,8 +176,9 @@ function findBestLine(game: OddsGame) {
 }
 
 function buildStake(ev: number, bankroll: number) {
-  if (ev >= 0.05) return Math.max(5, Math.round(bankroll * 0.02));
-  if (ev >= 0.03) return Math.max(5, Math.round(bankroll * 0.015));
+  if (ev >= 0.08) return Math.max(5, Math.round(bankroll * 0.025));
+  if (ev >= 0.065) return Math.max(5, Math.round(bankroll * 0.02));
+  if (ev >= 0.05) return Math.max(5, Math.round(bankroll * 0.015));
   return Math.max(5, Math.round(bankroll * 0.01));
 }
 
@@ -185,8 +207,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Default is now tighter than before
     const bankroll = Number(process.env.BANKROLL || 1000);
     const minEV = Number(process.env.MIN_EV_THRESHOLD || 0.05);
+
     const availableSports = await fetchAvailableSports();
     const targetSports = availableSports.filter((sport: { key: string }) =>
       MAJOR_SPORTS_SET.has(sport.key)
@@ -231,8 +255,10 @@ export async function GET(req: NextRequest) {
         const evPercent = Number((best.ev * 100).toFixed(2));
         const modelProbPercent = Number((best.winProb * 100).toFixed(2));
         const impliedProbPercent = Number((impliedProb * 100).toFixed(2));
+        const edgePercent = Number((best.edge * 100).toFixed(2));
+        const confidence = getConfidenceFromEV(best.ev);
 
-        const analysis = `Positive EV of ${evPercent}%. Model win probability is ${modelProbPercent}% versus market implied probability of ${impliedProbPercent}%. Best available price is at ${best.book}.`;
+        const analysis = `Positive EV of ${evPercent}%. Model win probability is ${modelProbPercent}% versus market implied probability of ${impliedProbPercent}%, giving a ${edgePercent}% edge. Best available price is at ${best.book}.`;
 
         const { data: existing } = await supabase
           .from('picks')
@@ -251,13 +277,14 @@ export async function GET(req: NextRequest) {
           odds: best.odds,
           sportsbook: best.book,
           sportsbook_key: best.bookKey,
+          confidence,
+          analysis,
           stake,
           to_win: toWin,
           status: 'pending',
           ev: evPercent,
           model_prob: modelProbPercent,
           commence_time: game.commence_time,
-          analysis,
         };
 
         const { data, error } = await supabase
@@ -286,8 +313,8 @@ export async function GET(req: NextRequest) {
       debug,
       message:
         insertedPicks.length > 0
-          ? `Inserted ${insertedPicks.length} pick(s).`
-          : 'No qualifying EV picks found today.',
+          ? `Inserted ${insertedPicks.length} sharper pick(s).`
+          : 'No qualifying sharp EV picks found today.',
     });
   } catch (error) {
     return NextResponse.json(
