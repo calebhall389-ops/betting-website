@@ -102,6 +102,3 @@ export async function fetchOddsForSport(sportKey: string) {
 
   return res.json();
 }
-
-  return await res.json();
-}
