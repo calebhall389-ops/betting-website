@@ -1,199 +1,106 @@
+import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-type PickRow = {
-  id: string;
-  created_at: string;
-  sport: string;
-  game: string;
-  pick: string;
-  odds: number;
-  confidence: string | number;
-  stake: number;
-  result: string;
-  analysis?: string | null;
-  sportsbook?: string | null;
-  sportsbook_key?: string | null;
-  ev?: number | null;
-  model_prob?: number | null;
-};
-
 function getSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url =
+    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!url || !anon) {
-    throw new Error('Missing Supabase public environment variables');
-  }
-
-  return createClient(url, anon);
-}
-
-function formatOdds(odds: number) {
-  return odds > 0 ? `+${odds}` : `${odds}`;
-}
-
-function formatEV(ev?: number | null) {
-  if (ev === null || ev === undefined || Number.isNaN(Number(ev))) return '-';
-  return `${Number(ev).toFixed(2)}%`;
-}
-
-function formatModelProb(prob?: number | null) {
-  if (prob === null || prob === undefined || Number.isNaN(Number(prob))) return '-';
-  return `${Number(prob).toFixed(2)}%`;
-}
-
-function getResultBadge(result: string) {
-  switch (result) {
-    case 'win':
-      return 'bg-green-100 text-green-700';
-    case 'loss':
-      return 'bg-red-100 text-red-700';
-    case 'push':
-      return 'bg-gray-200 text-gray-700';
-    case 'pending':
-      return 'bg-yellow-100 text-yellow-700';
-    default:
-      return 'bg-gray-100 text-gray-600';
-  }
-}
-
-function formatStake(stake: number) {
-  return `${stake}u`;
-}
-
-function getStarCount(confidence: string | number) {
-  const value = Number(confidence);
-  if (Number.isNaN(value)) return 1;
-  return Math.max(1, Math.min(5, Math.round(value)));
-}
-
-function renderStars(confidence: string | number) {
-  const stars = getStarCount(confidence);
-
-  return (
-    <div className="flex items-center gap-1">
-      {Array.from({ length: 5 }).map((_, index) => (
-        <span
-          key={index}
-          className={index < stars ? 'text-yellow-400' : 'text-slate-600'}
-        >
-          ★
-        </span>
-      ))}
-      <span className="ml-2 text-slate-300 text-sm">{stars}/5</span>
-    </div>
-  );
-}
-
-export default async function PicksPage() {
-  const supabase = getSupabase();
-
-  const { data, error } = await supabase
-    .from('picks')
-    .select(
-      'id, created_at, sport, game, pick, odds, confidence, stake, result, analysis, sportsbook, sportsbook_key, ev, model_prob'
-    )
-    .order('created_at', { ascending: false })
-    .limit(100);
-
-  if (error) {
-    return (
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <h1 className="text-2xl font-bold text-white">Expert Picks</h1>
-        <p className="mt-3 text-red-400">
-          Error loading picks: {error.message}
-        </p>
-      </main>
+  if (!url || !serviceRoleKey) {
+    throw new Error(
+      'Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) or SUPABASE_SERVICE_ROLE_KEY'
     );
   }
 
-  const picks = (data ?? []) as PickRow[];
+  return createClient(url, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
 
-  const wins = picks.filter((pick) => pick.result === 'win').length;
-  const losses = picks.filter((pick) => pick.result === 'loss').length;
-  const graded = wins + losses;
-  const winRate = graded > 0 ? ((wins / graded) * 100).toFixed(1) : '0.0';
+export async function GET() {
+  try {
+    const supabase = getSupabase();
 
-  return (
-    <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-white">Expert Picks</h1>
-        <p className="mt-2 text-sm text-slate-400">
-          {wins} W - {losses} L · {winRate}% Win Rate · Live picks from your
-          database
-        </p>
-      </div>
+    const { data, error } = await supabase
+      .from('picks')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-      <div className="grid gap-4">
-        {picks.length === 0 ? (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-400">
-            No picks found yet.
-          </div>
-        ) : (
-          picks.map((pick) => (
-            <div
-              key={pick.id}
-              className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-sm"
-            >
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <span className="rounded-md bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-300">
-                  {pick.sport}
-                </span>
+    if (error) {
+      console.error('Supabase GET error:', error);
 
-                <span
-                  className={`rounded-md px-2 py-1 text-xs font-semibold capitalize ${getResultBadge(
-                    pick.result
-                  )}`}
-                >
-                  {pick.result}
-                </span>
-              </div>
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.message,
+          picks: [],
+        },
+        { status: 500 }
+      );
+    }
 
-              <p className="text-sm text-slate-400">{pick.game}</p>
+    return NextResponse.json({
+      success: true,
+      picks: Array.isArray(data) ? data : [],
+    });
+  } catch (error) {
+    console.error('GET /api/picks crashed:', error);
 
-              <h2 className="mt-1 text-xl font-bold text-white">
-                {pick.pick}
-              </h2>
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown server error',
+        picks: [],
+      },
+      { status: 500 }
+    );
+  }
+}
 
-              <p className="mt-2 text-sm text-slate-300">
-                Sportsbook: {pick.sportsbook ?? '-'}
-              </p>
+export async function POST(request: Request) {
+  try {
+    const supabase = getSupabase();
+    const body = await request.json();
 
-              <div className="mt-3 flex flex-wrap gap-4 text-sm">
-                <span className="font-semibold text-emerald-400">
-                  {formatOdds(Number(pick.odds))}
-                </span>
+    const { data, error } = await supabase
+      .from('picks')
+      .insert([body])
+      .select()
+      .single();
 
-                <span className="text-slate-300">
-                  Stake: {formatStake(Number(pick.stake))}
-                </span>
+    if (error) {
+      console.error('Supabase POST error:', error);
 
-                <span className="text-cyan-300">
-                  EV: {formatEV(pick.ev)}
-                </span>
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.message,
+        },
+        { status: 400 }
+      );
+    }
 
-                <span className="text-violet-300">
-                  Model: {formatModelProb(pick.model_prob)}
-                </span>
+    return NextResponse.json(
+      {
+        success: true,
+        pick: data,
+      },
+      { status: 201 }
+    );
+  } catch (error) {
+    console.error('POST /api/picks crashed:', error);
 
-                <span className="text-slate-500">
-                  {new Date(pick.created_at).toLocaleDateString()}
-                </span>
-              </div>
-
-              <div className="mt-3">{renderStars(pick.confidence)}</div>
-
-              {pick.analysis && (
-                <p className="mt-4 text-sm leading-6 text-slate-300">
-                  {pick.analysis}
-                </p>
-              )}
-            </div>
-          ))
-        )}
-      </div>
-    </main>
-  );
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : 'Internal server error',
+      },
+      { status: 500 }
+    );
+  }
 }
