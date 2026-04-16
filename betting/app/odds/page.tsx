@@ -2,61 +2,37 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-type TeamNames = {
-  long?: string;
-  medium?: string;
-  short?: string;
-};
-
-type TeamInfo = {
-  names?: TeamNames;
-};
-
-type EventTeams = {
-  home?: TeamInfo;
-  away?: TeamInfo;
-};
-
-type MarketOutcome = {
+type Outcome = {
   name?: string;
   price?: number;
-  odds?: number;
 };
 
 type Market = {
-  marketKey?: string;
   key?: string;
-  marketType?: string;
-  outcomes?: MarketOutcome[];
+  outcomes?: Outcome[];
 };
 
 type Bookmaker = {
   key?: string;
   title?: string;
-  name?: string;
+  last_update?: string;
   markets?: Market[];
 };
 
 type OddsEvent = {
   id?: string;
-  eventID?: string;
   sport_key?: string;
+  sport_title?: string;
+  commence_time?: string;
   home_team?: string;
   away_team?: string;
-  commence_time?: string;
-  startTime?: string;
-  status?: {
-    startsAt?: string;
-  };
-  teams?: EventTeams;
   bookmakers?: Bookmaker[];
 };
 
-type OddsResponse = {
+type OddsApiResponse = {
   success?: boolean;
-  data?: unknown;
-  odds?: unknown;
-  events?: unknown;
+  data?: OddsEvent[];
+  error?: string;
 };
 
 type BestLine = {
@@ -71,36 +47,10 @@ const MAJOR_BOOKS = [
   'caesars',
   'espnbet',
   'betrivers',
-  'pointsbet',
+  'pointsbetus',
   'hardrockbet',
   'bet365',
 ];
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function toArray<T = unknown>(value: unknown): T[] {
-  return Array.isArray(value) ? (value as T[]) : [];
-}
-
-function getBookName(book: Bookmaker) {
-  return book.title || book.name || book.key || 'Unknown Book';
-}
-
-function normalizeBookKey(book: Bookmaker) {
-  return (book.key || book.title || book.name || '').toLowerCase().replace(/\s+/g, '');
-}
-
-function isMajorBook(book: Bookmaker) {
-  const key = normalizeBookKey(book);
-  return MAJOR_BOOKS.includes(key);
-}
-
-function formatOdds(price: number | null | undefined) {
-  if (price === null || price === undefined || Number.isNaN(price)) return '—';
-  return price > 0 ? `+${price}` : `${price}`;
-}
 
 function formatStartTime(value?: string) {
   if (!value) return 'Start time unavailable';
@@ -114,108 +64,71 @@ function formatStartTime(value?: string) {
   });
 }
 
-function getTeamName(team?: TeamInfo, fallback = 'Team') {
-  return team?.names?.long || team?.names?.medium || team?.names?.short || fallback;
+function formatOdds(price?: number | null) {
+  if (price === null || price === undefined || Number.isNaN(price)) return '—';
+  return price > 0 ? `+${price}` : `${price}`;
 }
 
-function getHomeTeam(event: OddsEvent) {
-  return event.home_team || getTeamName(event.teams?.home, 'Home Team');
+function normalizeBookKey(book?: string) {
+  return (book || '').toLowerCase().replace(/\s+/g, '');
 }
 
-function getAwayTeam(event: OddsEvent) {
-  return event.away_team || getTeamName(event.teams?.away, 'Away Team');
+function isMajorBook(key?: string) {
+  return MAJOR_BOOKS.includes(normalizeBookKey(key));
 }
 
-function getStartTime(event: OddsEvent) {
-  return event.startTime || event.status?.startsAt || event.commence_time || '';
-}
+function getMoneylineMarket(bookmaker?: Bookmaker) {
+  if (!bookmaker?.markets) return null;
 
-function isMoneylineMarket(market: Market) {
-  const key = (market.marketKey || market.key || market.marketType || '').toLowerCase();
   return (
-    key.includes('h2h') ||
-    key.includes('moneyline') ||
-    key === 'ml'
+    bookmaker.markets.find((market) => market.key === 'h2h') ?? null
   );
 }
 
-function getOutcomePrice(outcome: MarketOutcome) {
-  if (typeof outcome.price === 'number') return outcome.price;
-  if (typeof outcome.odds === 'number') return outcome.odds;
-  return null;
-}
-
-function isTeamMatch(outcomeName: string | undefined, teamName: string) {
-  if (!outcomeName) return false;
-  return outcomeName.trim().toLowerCase() === teamName.trim().toLowerCase();
-}
-
-function extractBestLines(event: OddsEvent) {
-  const awayTeam = getAwayTeam(event);
-  const homeTeam = getHomeTeam(event);
+function getBestLines(event: OddsEvent) {
+  const awayTeam = event.away_team || 'Away Team';
+  const homeTeam = event.home_team || 'Home Team';
 
   let bestAway: BestLine | null = null;
   let bestHome: BestLine | null = null;
 
-  const bookmakers = toArray<Bookmaker>((event as Record<string, unknown>).bookmakers);
+  for (const bookmaker of event.bookmakers || []) {
+    const bookKey = bookmaker.key || bookmaker.title || '';
+    if (!isMajorBook(bookKey)) continue;
 
-  for (const book of bookmakers) {
-    if (!isMajorBook(book)) continue;
+    const market = getMoneylineMarket(bookmaker);
+    if (!market?.outcomes?.length) continue;
 
-    const markets = toArray<Market>(book.markets);
-    const moneylineMarket = markets.find(isMoneylineMarket);
-
-    if (!moneylineMarket) continue;
-
-    const outcomes = toArray<MarketOutcome>(moneylineMarket.outcomes);
-
-    const awayOutcome = outcomes.find((outcome) =>
-      isTeamMatch(outcome.name, awayTeam)
+    const awayOutcome = market.outcomes.find(
+      (outcome) =>
+        outcome.name?.trim().toLowerCase() === awayTeam.trim().toLowerCase()
     );
 
-    const homeOutcome = outcomes.find((outcome) =>
-      isTeamMatch(outcome.name, homeTeam)
+    const homeOutcome = market.outcomes.find(
+      (outcome) =>
+        outcome.name?.trim().toLowerCase() === homeTeam.trim().toLowerCase()
     );
 
-    const awayPrice = awayOutcome ? getOutcomePrice(awayOutcome) : null;
-    const homePrice = homeOutcome ? getOutcomePrice(homeOutcome) : null;
-
-    if (awayPrice !== null) {
-      if (!bestAway || awayPrice > bestAway.price) {
+    if (typeof awayOutcome?.price === 'number') {
+      if (!bestAway || awayOutcome.price > bestAway.price) {
         bestAway = {
-          book: getBookName(book),
-          price: awayPrice,
+          book: bookmaker.title || bookmaker.key || 'Unknown Book',
+          price: awayOutcome.price,
         };
       }
     }
 
-    if (homePrice !== null) {
-      if (!bestHome || homePrice > bestHome.price) {
+    if (typeof homeOutcome?.price === 'number') {
+      if (!bestHome || homeOutcome.price > bestHome.price) {
         bestHome = {
-          book: getBookName(book),
-          price: homePrice,
+          book: bookmaker.title || bookmaker.key || 'Unknown Book',
+          price: homeOutcome.price,
         };
       }
     }
   }
 
   return { bestAway, bestHome };
-}
-
-function extractEvents(payload: OddsResponse): OddsEvent[] {
-  if (Array.isArray(payload.data)) return payload.data as OddsEvent[];
-  if (Array.isArray(payload.events)) return payload.events as OddsEvent[];
-  if (Array.isArray(payload.odds)) return payload.odds as OddsEvent[];
-
-  if (isObject(payload.data)) {
-    const dataObj = payload.data as Record<string, unknown>;
-
-    if (Array.isArray(dataObj.events)) return dataObj.events as OddsEvent[];
-    if (Array.isArray(dataObj.data)) return dataObj.data as OddsEvent[];
-    if (Array.isArray(dataObj.odds)) return dataObj.odds as OddsEvent[];
-  }
-
-  return [];
 }
 
 export default function OddsPage() {
@@ -234,14 +147,13 @@ export default function OddsPage() {
           cache: 'no-store',
         });
 
-        const json: OddsResponse = await res.json();
+        const json: OddsApiResponse = await res.json();
 
-        if (!res.ok) {
-          throw new Error('Failed to fetch odds');
+        if (!res.ok || !json.success) {
+          throw new Error(json.error || 'Failed to fetch odds');
         }
 
-        const extracted = extractEvents(json);
-        setEvents(extracted);
+        setEvents(Array.isArray(json.data) ? json.data : []);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load odds');
       } finally {
@@ -253,27 +165,26 @@ export default function OddsPage() {
   }, []);
 
   const sports = useMemo(() => {
-    const uniqueSports = Array.from(
+    const unique = Array.from(
       new Set(
         events
-          .map((event) => event.sport_key)
+          .map((event) => event.sport_title)
           .filter((sport): sport is string => Boolean(sport))
       )
-    ).sort();
+    );
 
-    return ['ALL', ...uniqueSports];
+    return ['ALL', ...unique];
   }, [events]);
 
   const filteredEvents = useMemo(() => {
-    let result = [...events];
-
-    if (sportFilter !== 'ALL') {
-      result = result.filter((event) => event.sport_key === sportFilter);
-    }
+    const result =
+      sportFilter === 'ALL'
+        ? [...events]
+        : events.filter((event) => event.sport_title === sportFilter);
 
     result.sort((a, b) => {
-      const aTime = new Date(getStartTime(a)).getTime();
-      const bTime = new Date(getStartTime(b)).getTime();
+      const aTime = new Date(a.commence_time || '').getTime();
+      const bTime = new Date(b.commence_time || '').getTime();
       return aTime - bTime;
     });
 
@@ -325,27 +236,29 @@ export default function OddsPage() {
           {!loading &&
             !error &&
             filteredEvents.map((event, index) => {
-              const awayTeam = getAwayTeam(event);
-              const homeTeam = getHomeTeam(event);
-              const startTime = getStartTime(event);
-              const { bestAway, bestHome } = extractBestLines(event);
+              const awayTeam = event.away_team || 'Away Team';
+              const homeTeam = event.home_team || 'Home Team';
+              const { bestAway, bestHome } = getBestLines(event);
 
               return (
                 <div
-                  key={event.eventID || event.id || `${awayTeam}-${homeTeam}-${index}`}
+                  key={event.id || `${awayTeam}-${homeTeam}-${index}`}
                   className="rounded-2xl border border-white/10 bg-white/5 p-6"
                 >
                   <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
                     <div>
-                      <div className="text-2xl font-semibold">
+                      <div className="text-sm uppercase tracking-wide text-gray-400">
+                        {event.sport_title || event.sport_key || 'Sport'}
+                      </div>
+                      <div className="mt-1 text-2xl font-semibold">
                         {awayTeam} @ {homeTeam}
                       </div>
                       <div className="mt-2 text-sm text-gray-400">
-                        {formatStartTime(startTime)}
+                        {formatStartTime(event.commence_time)}
                       </div>
                     </div>
 
-                    <div className="grid gap-4 md:min-w-[360px] md:grid-cols-2">
+                    <div className="grid gap-4 md:min-w-[380px] md:grid-cols-2">
                       <div className="rounded-2xl bg-white/5 p-4">
                         <div className="text-sm text-gray-400">
                           {awayTeam} best ML
