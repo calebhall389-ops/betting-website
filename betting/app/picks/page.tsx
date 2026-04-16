@@ -1,106 +1,159 @@
-import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+'use client';
 
-export const dynamic = 'force-dynamic';
+import { useEffect, useState } from 'react';
 
-function getSupabase() {
-  const url =
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+type Pick = {
+  id?: string;
+  created_at?: string;
+  sport?: string | null;
+  game?: string | null;
+  pick?: string | null;
+  odds?: number | string | null;
+  confidence?: string | number | null;
+  stake?: number | string | null;
+  result?: string | null;
+  analysis?: string | null;
+  edge?: number | null;
+  ev?: number | null;
+  sportsbook?: string | null;
+  model_probability?: number | null;
+  market_probability?: number | null;
+};
 
-  if (!url || !serviceRoleKey) {
-    throw new Error(
-      'Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) or SUPABASE_SERVICE_ROLE_KEY'
-    );
-  }
+export default function PicksPage() {
+  const [picks, setPicks] = useState<Pick[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  return createClient(url, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
-}
+  useEffect(() => {
+    async function loadPicks() {
+      try {
+        setLoading(true);
+        setError(null);
 
-export async function GET() {
-  try {
-    const supabase = getSupabase();
+        const res = await fetch('/api/picks', {
+          cache: 'no-store',
+        });
 
-    const { data, error } = await supabase
-      .from('picks')
-      .select('*')
-      .order('created_at', { ascending: false });
+        const json = await res.json();
 
-    if (error) {
-      console.error('Supabase GET error:', error);
+        if (!res.ok) {
+          throw new Error(json?.error || 'Failed to load picks');
+        }
 
-      return NextResponse.json(
-        {
-          success: false,
-          error: error.message,
-          picks: [],
-        },
-        { status: 500 }
-      );
+        setPicks(Array.isArray(json?.picks) ? json.picks : []);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Something went wrong');
+        setPicks([]);
+      } finally {
+        setLoading(false);
+      }
     }
 
-    return NextResponse.json({
-      success: true,
-      picks: Array.isArray(data) ? data : [],
-    });
-  } catch (error) {
-    console.error('GET /api/picks crashed:', error);
+    loadPicks();
+  }, []);
 
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown server error',
-        picks: [],
-      },
-      { status: 500 }
-    );
-  }
-}
+  return (
+    <main className="min-h-screen bg-black text-white p-6">
+      <div className="mx-auto max-w-5xl">
+        <h1 className="text-3xl font-bold mb-6">Picks</h1>
 
-export async function POST(request: Request) {
-  try {
-    const supabase = getSupabase();
-    const body = await request.json();
+        {loading && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+            Loading picks...
+          </div>
+        )}
 
-    const { data, error } = await supabase
-      .from('picks')
-      .insert([body])
-      .select()
-      .single();
+        {error && (
+          <div className="rounded-xl border border-red-800 bg-red-950 p-4 text-red-200">
+            Error: {error}
+          </div>
+        )}
 
-    if (error) {
-      console.error('Supabase POST error:', error);
+        {!loading && !error && picks.length === 0 && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+            No picks found.
+          </div>
+        )}
 
-      return NextResponse.json(
-        {
-          success: false,
-          error: error.message,
-        },
-        { status: 400 }
-      );
-    }
+        <div className="grid gap-4">
+          {picks.map((pick, index) => (
+            <div
+              key={pick.id ?? `${pick.game ?? 'game'}-${index}`}
+              className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5 shadow"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm text-zinc-400">
+                    {pick.sport ?? 'Unknown Sport'}
+                  </p>
+                  <h2 className="text-xl font-semibold">
+                    {pick.pick ?? 'Unknown Pick'}
+                  </h2>
+                  <p className="text-zinc-300">
+                    {pick.game ?? 'Unknown Game'}
+                  </p>
+                </div>
 
-    return NextResponse.json(
-      {
-        success: true,
-        pick: data,
-      },
-      { status: 201 }
-    );
-  } catch (error) {
-    console.error('POST /api/picks crashed:', error);
+                <div className="text-right">
+                  <p className="text-sm text-zinc-400">Odds</p>
+                  <p className="text-lg font-bold">{pick.odds ?? 'N/A'}</p>
+                </div>
+              </div>
 
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Internal server error',
-      },
-      { status: 500 }
-    );
-  }
+              <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                <div className="rounded-xl bg-zinc-800 p-3">
+                  <p className="text-xs text-zinc-400">Confidence</p>
+                  <p>{pick.confidence ?? 'N/A'}</p>
+                </div>
+
+                <div className="rounded-xl bg-zinc-800 p-3">
+                  <p className="text-xs text-zinc-400">Stake</p>
+                  <p>{pick.stake ?? 'N/A'}</p>
+                </div>
+
+                <div className="rounded-xl bg-zinc-800 p-3">
+                  <p className="text-xs text-zinc-400">Result</p>
+                  <p>{pick.result ?? 'pending'}</p>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-2 sm:grid-cols-4">
+                <div className="rounded-xl bg-zinc-800 p-3">
+                  <p className="text-xs text-zinc-400">Sportsbook</p>
+                  <p>{pick.sportsbook ?? 'N/A'}</p>
+                </div>
+
+                <div className="rounded-xl bg-zinc-800 p-3">
+                  <p className="text-xs text-zinc-400">Edge</p>
+                  <p>{pick.edge ?? 'N/A'}</p>
+                </div>
+
+                <div className="rounded-xl bg-zinc-800 p-3">
+                  <p className="text-xs text-zinc-400">EV</p>
+                  <p>{pick.ev ?? 'N/A'}</p>
+                </div>
+
+                <div className="rounded-xl bg-zinc-800 p-3">
+                  <p className="text-xs text-zinc-400">Created</p>
+                  <p>
+                    {pick.created_at
+                      ? new Date(pick.created_at).toLocaleString()
+                      : 'N/A'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-xl bg-zinc-800 p-3">
+                <p className="text-xs text-zinc-400 mb-1">Analysis</p>
+                <p className="text-zinc-200">
+                  {pick.analysis ?? 'No analysis available yet.'}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </main>
+  );
 }
