@@ -4,14 +4,17 @@ import { createClient } from '@supabase/supabase-js';
 export const dynamic = 'force-dynamic';
 
 function getSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url =
+    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!url || !anon) {
-    throw new Error('Missing Supabase environment variables');
+  if (!url || !key) {
+    throw new Error(
+      'Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) or SUPABASE_SERVICE_ROLE_KEY'
+    );
   }
 
-  return createClient(url, anon);
+  return createClient(url, key);
 }
 
 export async function GET() {
@@ -25,7 +28,7 @@ export async function GET() {
 
     if (error) {
       return NextResponse.json(
-        { error: error.message, picks: [] },
+        { success: false, error: error.message, picks: [] },
         { status: 500 }
       );
     }
@@ -59,15 +62,22 @@ export async function POST(request: Request) {
 
     if (error) {
       return NextResponse.json(
-        { error: error.message },
+        { success: false, error: error.message },
         { status: 400 }
       );
     }
 
-    return NextResponse.json({ pick: data }, { status: 201 });
+    return NextResponse.json(
+      {
+        success: true,
+        pick: data,
+      },
+      { status: 201 }
+    );
   } catch (error) {
     return NextResponse.json(
       {
+        success: false,
         error: error instanceof Error ? error.message : 'Internal server error',
       },
       { status: 500 }
