@@ -99,7 +99,6 @@ function normalizeTeamName(name: string): string {
 }
 
 function computeConfidence(edge: number, ev: number): number {
-  // Keeps confidence in a realistic range for your UI
   const raw = 0.55 + edge * 2.2 + ev * 1.4;
   return clamp(raw, 0.55, 0.78);
 }
@@ -117,7 +116,6 @@ function computeQuarterKellyStake(
   const fullKelly = (b * winProb - q) / b;
   const fractionalKelly = Math.max(0, fullKelly) * fraction;
 
-  // Cap stake between 1% and 3% of bankroll for safety
   const capped = clamp(fractionalKelly, 0.01, 0.03);
   return Number((bankroll * capped).toFixed(2));
 }
@@ -186,7 +184,6 @@ function buildCandidatesFromEvents(
         } else {
           current.prices.push(outcome.price);
 
-          // Better price = larger positive number or less negative number
           if (outcome.price > current.bestPrice) {
             current.bestPrice = outcome.price;
             current.bestBookmaker = bookmaker.title;
@@ -195,13 +192,12 @@ function buildCandidatesFromEvents(
       }
     }
 
-    for (const [teamName, data] of teamPrices.entries()) {
-      if (data.prices.length < settings.minBooks) continue;
+    Array.from(teamPrices.entries()).forEach(([teamName, data]) => {
+      if (data.prices.length < settings.minBooks) return;
 
       const consensusProb = median(data.prices.map(americanToImpliedProb));
       const bookProb = americanToImpliedProb(data.bestPrice);
 
-      // Edge = consensus/model says this side wins more often than the book implies
       const edge = consensusProb - bookProb;
 
       const decimalOdds = americanToDecimal(data.bestPrice);
@@ -214,7 +210,7 @@ function buildCandidatesFromEvents(
         ev < settings.minEv ||
         confidence < settings.minConfidence
       ) {
-        continue;
+        return;
       }
 
       const displayTeam =
@@ -252,7 +248,7 @@ function buildCandidatesFromEvents(
         analysis,
         bookmaker: data.bestBookmaker,
       });
-    }
+    });
   }
 
   return candidates;
@@ -272,10 +268,9 @@ export async function GET(req: NextRequest) {
 
     const supabase = getSupabase();
 
-    // Medium-sharp settings
-    const MIN_EDGE = Number(process.env.MIN_EDGE ?? 0.015); // 1.5%
-    const MIN_EV = Number(process.env.MIN_EV ?? 0.02); // 2.0%
-    const MIN_CONFIDENCE = Number(process.env.MIN_CONFIDENCE ?? 0.62); // 62%
+    const MIN_EDGE = Number(process.env.MIN_EDGE ?? 0.015);
+    const MIN_EV = Number(process.env.MIN_EV ?? 0.02);
+    const MIN_CONFIDENCE = Number(process.env.MIN_CONFIDENCE ?? 0.62);
     const MIN_BOOKS = Number(process.env.MIN_BOOKS ?? 3);
     const MAX_PICKS = Number(process.env.MAX_PICKS ?? 5);
     const BANKROLL = Number(process.env.BANKROLL ?? 1000);
@@ -345,7 +340,6 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Pull existing pending picks so we do not insert duplicates
     const { data: existingRows, error: existingError } = await supabase
       .from('picks')
       .select('game, pick, result')
