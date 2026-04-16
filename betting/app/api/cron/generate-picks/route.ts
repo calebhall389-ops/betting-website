@@ -186,8 +186,7 @@ export async function GET(req: NextRequest) {
     }
 
     const bankroll = Number(process.env.BANKROLL || 1000);
-    const minEV = Number(process.env.MIN_EV_THRESHOLD || 0.03);
-
+    const minEV = Number(process.env.MIN_EV_THRESHOLD || 0.05);
     const availableSports = await fetchAvailableSports();
     const targetSports = availableSports.filter((sport: { key: string }) =>
       MAJOR_SPORTS_SET.has(sport.key)
