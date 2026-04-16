@@ -7,6 +7,7 @@ export type SupportedSport = {
 };
 
 export const ALLOWED_SPORT_KEYS = [
+  'baseball_mlb',
   'basketball_nba',
   'americanfootball_nfl',
   'icehockey_nhl',
@@ -18,17 +19,8 @@ export const ALLOWED_SPORT_KEYS = [
   'motorsport_nascar_cup',
 ];
 
-export const PICKS_SPORT_KEYS = [
-  'basketball_nba',
-  'americanfootball_nfl',
-  'icehockey_nhl',
-  'mma_mixed_martial_arts',
-  'soccer_epl',
-  'soccer_usa_mls',
-  'basketball_wnba',
-];
-
 export const SPORT_NAME_MAP: Record<string, string> = {
+  baseball_mlb: 'MLB',
   basketball_nba: 'NBA',
   americanfootball_nfl: 'NFL',
   icehockey_nhl: 'NHL',
@@ -107,6 +99,9 @@ export async function fetchOddsForSport(sportKey: string) {
     const text = await res.text();
     throw new Error(`Failed to load odds for ${sportKey}: ${text}`);
   }
+
+  return await res.json();
+}
 
   return await res.json();
 }
