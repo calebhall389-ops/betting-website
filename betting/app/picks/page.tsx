@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 type Pick = {
   id: string;
   created_at: string;
+  commence_time?: string | null;
   sport: string;
   game: string;
   pick: string;
@@ -25,7 +26,6 @@ export default function PicksPage() {
   const [sportFilter, setSportFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState('newest');
   const [sharpOnly, setSharpOnly] = useState(false);
-  const [todayOnly, setTodayOnly] = useState(false);
 
   useEffect(() => {
     async function fetchPicks() {
@@ -54,14 +54,16 @@ export default function PicksPage() {
     fetchPicks();
   }, []);
 
-  function isToday(dateString: string) {
-    const pickDate = new Date(dateString);
+  function isToday(dateString?: string | null) {
+    if (!dateString) return false;
+
+    const gameDate = new Date(dateString);
     const now = new Date();
 
     return (
-      pickDate.getFullYear() === now.getFullYear() &&
-      pickDate.getMonth() === now.getMonth() &&
-      pickDate.getDate() === now.getDate()
+      gameDate.getFullYear() === now.getFullYear() &&
+      gameDate.getMonth() === now.getMonth() &&
+      gameDate.getDate() === now.getDate()
     );
   }
 
@@ -110,6 +112,19 @@ export default function PicksPage() {
     }
   }
 
+  function formatGameTime(dateString?: string | null) {
+    if (!dateString) return '—';
+
+    try {
+      return new Date(dateString).toLocaleString('en-US', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+    } catch {
+      return dateString;
+    }
+  }
+
   function getEdgeColor(edge: number | null | undefined) {
     if (edge === null || edge === undefined) return 'text-gray-300';
     if (edge >= 3) return 'text-green-400';
@@ -130,24 +145,24 @@ export default function PicksPage() {
     return ev >= 2 && edge >= 1;
   }
 
+  const todaysPicks = useMemo(() => {
+    return picks.filter((pick) => isToday(pick.commence_time));
+  }, [picks]);
+
   const sports = useMemo(() => {
     const uniqueSports = Array.from(
       new Set(
-        picks
+        todaysPicks
           .map((pick) => pick.sport?.trim())
           .filter((sport): sport is string => Boolean(sport))
       )
     ).sort();
 
     return ['ALL', ...uniqueSports];
-  }, [picks]);
+  }, [todaysPicks]);
 
   const filteredPicks = useMemo(() => {
-    let result = [...picks];
-
-    if (todayOnly) {
-      result = result.filter((pick) => isToday(pick.created_at));
-    }
+    let result = [...todaysPicks];
 
     if (sportFilter !== 'ALL') {
       result = result.filter((pick) => pick.sport === sportFilter);
@@ -185,12 +200,13 @@ export default function PicksPage() {
       }
 
       return (
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        new Date(b.commence_time || b.created_at).getTime() -
+        new Date(a.commence_time || a.created_at).getTime()
       );
     });
 
     return result;
-  }, [picks, sportFilter, sortBy, sharpOnly, todayOnly]);
+  }, [todaysPicks, sportFilter, sortBy, sharpOnly]);
 
   return (
     <main className="min-h-screen bg-black text-white">
@@ -198,11 +214,11 @@ export default function PicksPage() {
         <div className="mb-8">
           <h1 className="text-4xl font-bold tracking-tight">Latest Picks</h1>
           <p className="mt-2 text-base text-gray-400">
-            View your generated picks, EV, edge, sportsbook, and analysis
+            Showing only picks for today’s games
           </p>
         </div>
 
-        <div className="mb-6 grid gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 md:grid-cols-4">
+        <div className="mb-6 grid gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 md:grid-cols-3">
           <div>
             <label className="mb-2 block text-sm text-gray-400">Sport</label>
             <select
@@ -225,11 +241,21 @@ export default function PicksPage() {
               onChange={(e) => setSortBy(e.target.value)}
               className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none"
             >
-              <option value="newest" className="bg-gray-900">Newest</option>
-              <option value="ev" className="bg-gray-900">Highest EV</option>
-              <option value="edge" className="bg-gray-900">Highest Edge</option>
-              <option value="confidence" className="bg-gray-900">Highest Confidence</option>
-              <option value="odds" className="bg-gray-900">Highest Odds</option>
+              <option value="newest" className="bg-gray-900">
+                Newest
+              </option>
+              <option value="ev" className="bg-gray-900">
+                Highest EV
+              </option>
+              <option value="edge" className="bg-gray-900">
+                Highest Edge
+              </option>
+              <option value="confidence" className="bg-gray-900">
+                Highest Confidence
+              </option>
+              <option value="odds" className="bg-gray-900">
+                Highest Odds
+              </option>
             </select>
           </div>
 
@@ -242,18 +268,6 @@ export default function PicksPage() {
                 className="h-4 w-4"
               />
               <span className="text-sm text-white">Sharp picks only</span>
-            </label>
-          </div>
-
-          <div className="flex items-end">
-            <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/10 bg-white/10 px-4 py-3">
-              <input
-                type="checkbox"
-                checked={todayOnly}
-                onChange={(e) => setTodayOnly(e.target.checked)}
-                className="h-4 w-4"
-              />
-              <span className="text-sm text-white">Today only</span>
             </label>
           </div>
         </div>
@@ -272,7 +286,7 @@ export default function PicksPage() {
 
         {!loading && !error && filteredPicks.length === 0 && (
           <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center text-gray-400">
-            No picks found with the current filters.
+            No picks found for today’s games.
           </div>
         )}
 
@@ -310,7 +324,7 @@ export default function PicksPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-4">
                   <div className="rounded-2xl bg-white/5 p-4">
                     <div className="text-sm text-gray-400">Confidence</div>
                     <div className="text-3xl font-semibold">
@@ -331,6 +345,13 @@ export default function PicksPage() {
                       {pick.result || 'pending'}
                     </div>
                   </div>
+
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <div className="text-sm text-gray-400">Game Time</div>
+                    <div className="text-xl font-semibold">
+                      {formatGameTime(pick.commence_time)}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="mt-4 grid gap-4 md:grid-cols-4">
@@ -343,14 +364,22 @@ export default function PicksPage() {
 
                   <div className="rounded-2xl bg-white/5 p-4">
                     <div className="text-sm text-gray-400">Edge</div>
-                    <div className={`text-2xl font-semibold ${getEdgeColor(pick.edge)}`}>
+                    <div
+                      className={`text-2xl font-semibold ${getEdgeColor(
+                        pick.edge
+                      )}`}
+                    >
                       {formatPercent(pick.edge)}
                     </div>
                   </div>
 
                   <div className="rounded-2xl bg-white/5 p-4">
                     <div className="text-sm text-gray-400">EV</div>
-                    <div className={`text-2xl font-semibold ${getEvColor(pick.ev)}`}>
+                    <div
+                      className={`text-2xl font-semibold ${getEvColor(
+                        pick.ev
+                      )}`}
+                    >
                       {formatPercent(pick.ev)}
                     </div>
                   </div>
