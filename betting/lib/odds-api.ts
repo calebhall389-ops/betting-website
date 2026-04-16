@@ -32,6 +32,16 @@ export const SPORT_NAME_MAP: Record<string, string> = {
   motorsport_nascar_cup: 'NASCAR',
 };
 
+export const MAJOR_BOOKMAKERS = [
+  'draftkings',
+  'fanduel',
+  'betmgm',
+  'caesars',
+  'espnbet',
+  'fanatics',
+  'pinnacle',
+];
+
 const ODDS_API_BASE = 'https://api.the-odds-api.com/v4';
 
 function requireApiKey() {
@@ -82,7 +92,7 @@ export async function fetchOddsForSport(sportKey: string) {
 
   const params = new URLSearchParams({
     apiKey,
-    regions: 'us',
+    bookmakers: MAJOR_BOOKMAKERS.join(','),
     markets,
     oddsFormat: 'american',
   });
