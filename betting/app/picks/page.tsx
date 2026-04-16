@@ -49,7 +49,8 @@ export default async function PicksPage() {
     const { data, error: supabaseError } = await supabase
       .from('picks')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(5);
 
     if (supabaseError) {
       throw new Error(supabaseError.message);
@@ -63,7 +64,14 @@ export default async function PicksPage() {
   return (
     <main className="min-h-screen bg-black text-white p-6">
       <div className="mx-auto max-w-5xl">
-        <h1 className="text-3xl font-bold mb-6">Picks</h1>
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold">Latest Picks</h1>
+            <p className="mt-1 text-sm text-zinc-400">
+              Showing the 5 most recent sharp picks
+            </p>
+          </div>
+        </div>
 
         {error && (
           <div className="rounded-xl border border-red-800 bg-red-950 p-4 text-red-200">
