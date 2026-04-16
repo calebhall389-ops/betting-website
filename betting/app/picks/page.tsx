@@ -15,6 +15,8 @@ type PickRow = {
   analysis?: string | null;
   sportsbook?: string | null;
   sportsbook_key?: string | null;
+  ev?: number | null;
+  model_prob?: number | null;
 };
 
 function getSupabase() {
@@ -30,6 +32,16 @@ function getSupabase() {
 
 function formatOdds(odds: number) {
   return odds > 0 ? `+${odds}` : `${odds}`;
+}
+
+function formatEV(ev?: number | null) {
+  if (ev === null || ev === undefined || Number.isNaN(Number(ev))) return '-';
+  return `${Number(ev).toFixed(2)}%`;
+}
+
+function formatModelProb(prob?: number | null) {
+  if (prob === null || prob === undefined || Number.isNaN(Number(prob))) return '-';
+  return `${Number(prob).toFixed(2)}%`;
 }
 
 function getResultBadge(result: string) {
@@ -53,9 +65,7 @@ function formatStake(stake: number) {
 
 function getStarCount(confidence: string | number) {
   const value = Number(confidence);
-
   if (Number.isNaN(value)) return 1;
-
   return Math.max(1, Math.min(5, Math.round(value)));
 }
 
@@ -83,7 +93,7 @@ export default async function PicksPage() {
   const { data, error } = await supabase
     .from('picks')
     .select(
-      'id, created_at, sport, game, pick, odds, confidence, stake, result, analysis, sportsbook, sportsbook_key'
+      'id, created_at, sport, game, pick, odds, confidence, stake, result, analysis, sportsbook, sportsbook_key, ev, model_prob'
     )
     .order('created_at', { ascending: false })
     .limit(100);
@@ -158,6 +168,14 @@ export default async function PicksPage() {
 
                 <span className="text-slate-300">
                   Stake: {formatStake(Number(pick.stake))}
+                </span>
+
+                <span className="text-cyan-300">
+                  EV: {formatEV(pick.ev)}
+                </span>
+
+                <span className="text-violet-300">
+                  Model: {formatModelProb(pick.model_prob)}
                 </span>
 
                 <span className="text-slate-500">
