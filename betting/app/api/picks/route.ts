@@ -1,35 +1,48 @@
 import { NextResponse } from 'next/server';
-import { getSupabaseAdmin } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
+function getSupabase() {
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const anon =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY;
+
+  if (!url || !anon) {
+    throw new Error(
+      'Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY/SUPABASE_ANON_KEY'
+    );
+  }
+
+  return createClient(url, anon);
+}
+
 export async function GET() {
   try {
-    const supabase = getSupabaseAdmin();
-
-    const now = new Date();
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-
-    const end = new Date(now);
-    end.setDate(end.getDate() + 1);
-    end.setHours(23, 59, 59, 999);
+    const supabase = getSupabase();
 
     const { data, error } = await supabase
       .from('picks')
       .select('*')
-      .eq('pick_type', 'pregame')
-      .gte('created_at', start.toISOString())
-      .lte('created_at', end.toISOString())
-      .order('created_at', { ascending: false });
+      .eq('mode', 'pregame')
+      .in('status', ['open', 'pending'])
+      .order('commence_time', { ascending: true });
 
     if (error) {
-      throw new Error(error.message);
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.message,
+        },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
       success: true,
-      picks: data ?? [],
+      picks: data || [],
     });
   } catch (error) {
     return NextResponse.json(
