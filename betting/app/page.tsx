@@ -4,18 +4,21 @@ import { ArrowRight, Target, TrendingUp, BarChart3, Trophy } from 'lucide-react'
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-[#020817] text-white">
+      {/* HERO SECTION */}
       <section className="relative overflow-hidden border-b border-white/10">
+        {/* Background */}
         <div className="absolute inset-0">
           <div
-            className="h-full w-full bg-cover bg-center opacity-20"
+            className="h-full w-full bg-cover bg-center opacity-25"
             style={{
               backgroundImage:
-                "url('https://images.unsplash.com/photo-1547347298-4074fc3086f0?auto=format&fit=crop&w=1600&q=80')",
+                "url('https://images.unsplash.com/photo-1606167668584-78701c57f13d?auto=format&fit=crop&w=1600&q=80')",
             }}
           />
           <div className="absolute inset-0 bg-gradient-to-b from-[#020817]/70 via-[#020817]/85 to-[#020817]" />
         </div>
 
+        {/* Content */}
         <div className="relative mx-auto max-w-7xl px-6 py-24 md:px-8 md:py-32">
           <div className="max-w-3xl">
             <div className="mb-5 inline-flex items-center rounded-full border border-emerald-400/20 bg-emerald-400/10 px-4 py-1.5 text-sm font-medium text-emerald-300">
@@ -51,6 +54,7 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* QUICK ACCESS */}
       <section className="mx-auto max-w-7xl px-6 py-12 md:px-8">
         <div className="mb-6">
           <h2 className="text-2xl font-bold text-white">Quick Access</h2>
