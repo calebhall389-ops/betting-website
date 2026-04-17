@@ -68,17 +68,17 @@ function getSupabase() {
 }
 
 function americanToImpliedProb(odds: number): number {
-  if (odds > 0) {
-    return 100 / (odds + 100);
-  }
+  if (odds > 0) return 100 / (odds + 100);
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
 function impliedProbToAmerican(prob: number): number {
   if (prob <= 0 || prob >= 1) return 0;
+
   if (prob >= 0.5) {
     return Math.round(-(prob / (1 - prob)) * 100);
   }
+
   return Math.round(((1 - prob) / prob) * 100);
 }
 
@@ -91,32 +91,38 @@ function expectedValue(modelProb: number, americanOdds: number): number {
   return modelProb * (decimalOdds - 1) - (1 - modelProb);
 }
 
-function isSameDay(dateA: Date, dateB: Date): boolean {
+function isSameUtcDay(a: Date, b: Date): boolean {
   return (
-    dateA.getUTCFullYear() === dateB.getUTCFullYear() &&
-    dateA.getUTCMonth() === dateB.getUTCMonth() &&
-    dateA.getUTCDate() === dateB.getUTCDate()
+    a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth() === b.getUTCMonth() &&
+    a.getUTCDate() === b.getUTCDate()
   );
 }
 
+function normalizeSportName(sportTitle: string): string {
+  if (sportTitle === 'American Football') return 'NFL';
+  if (sportTitle === 'Baseball') return 'MLB';
+  if (sportTitle === 'Basketball') return 'NBA';
+  if (sportTitle === 'Ice Hockey') return 'NHL';
+  return sportTitle;
+}
+
 function getPlayRating(evPct: number, edgePct: number, modelProb: number): string {
-  if (evPct >= 15 && edgePct >= 6 && modelProb >= 0.6) {
+  if (evPct >= 14 && edgePct >= 6 && modelProb >= 0.6) {
     return 'MAX PLAY';
   }
-  if (evPct >= 12 && edgePct >= 5 && modelProb >= 0.55) {
+  if (evPct >= 12 && edgePct >= 5.5 && modelProb >= 0.56) {
     return 'A+ PLAY';
   }
-  if (evPct >= 10 && edgePct >= 4.5) {
+  if (evPct >= 10 && edgePct >= 4.5 && modelProb >= 0.52) {
     return 'A PLAY';
   }
-  if (evPct >= 8 && edgePct >= 4) {
-    return 'B+ PLAY';
-  }
-  return 'B PLAY';
+  return 'B+ PLAY';
 }
 
 async function fetchOdds(): Promise<OddsEvent[]> {
   const apiKey = process.env.ODDS_API_KEY;
+
   if (!apiKey) {
     throw new Error('Missing ODDS_API_KEY');
   }
@@ -190,11 +196,11 @@ export async function GET(req: NextRequest) {
       'pointsbetus',
     ];
 
-    const MIN_BOOKS = 2;
-    const MIN_EDGE = 4.0;
-    const MIN_EV = 8.0;
-    const MIN_CONFIDENCE = 40;
-    const MAX_PICKS_PER_RUN = 12;
+    const MIN_BOOKS = 3;
+    const MIN_EDGE = 4.5;
+    const MIN_EV = 10;
+    const MIN_CONFIDENCE = 50;
+    const MAX_PICKS_PER_RUN = 5;
 
     const now = new Date();
     const tomorrow = new Date(now);
@@ -205,15 +211,11 @@ export async function GET(req: NextRequest) {
 
     for (const event of oddsEvents) {
       const gameDate = new Date(event.commence_time);
-
-      const isToday = isSameDay(gameDate, now);
-      const isTomorrow = isSameDay(gameDate, tomorrow);
+      const isToday = isSameUtcDay(gameDate, now);
+      const isTomorrow = isSameUtcDay(gameDate, tomorrow);
 
       if (!isToday && !isTomorrow) continue;
-
-      if (!event.bookmakers || event.bookmakers.length === 0) continue;
-
-      if (gameDate.getTime() < now.getTime() && !isToday) continue;
+      if (!event.bookmakers?.length) continue;
 
       eventsChecked++;
 
@@ -251,6 +253,8 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      const eventCandidates: CandidatePick[] = [];
+
       for (const [team, data] of Object.entries(sides)) {
         if (!data || data.prices.length < MIN_BOOKS) continue;
 
@@ -259,7 +263,8 @@ export async function GET(req: NextRequest) {
             .map((price) => americanToImpliedProb(price))
             .reduce((sum, prob) => sum + prob, 0) / data.prices.length;
 
-        const modelProb = consensusProb * 1.08;
+        // Elite version: lighter model boost so the edge is less inflated
+        const modelProb = Math.min(consensusProb * 1.05, 0.92);
 
         if (modelProb <= 0 || modelProb >= 0.95) continue;
 
@@ -279,31 +284,25 @@ export async function GET(req: NextRequest) {
 
         const playRating = getPlayRating(ev, edge, modelProb);
         const fairOdds = impliedProbToAmerican(modelProb);
+        const displayOdds = bestOdds > 0 ? `+${bestOdds}` : `${bestOdds}`;
+        const displayFairOdds = fairOdds > 0 ? `+${fairOdds}` : `${fairOdds}`;
 
-        const pick: CandidatePick = {
-          sport:
-            event.sport_title === 'American Football'
-              ? 'NFL'
-              : event.sport_title === 'Baseball'
-              ? 'MLB'
-              : event.sport_title === 'Basketball'
-              ? 'NBA'
-              : event.sport_title === 'Ice Hockey'
-              ? 'NHL'
-              : event.sport_title,
+        eventCandidates.push({
+          sport: normalizeSportName(event.sport_title),
           game: `${event.away_team} at ${event.home_team}`,
           pick: `${team} ML`,
           odds: bestOdds,
           confidence: String(confidence),
-          analysis: `${team} ML is showing +EV against market consensus. Best price found: ${bestOdds > 0 ? `+${bestOdds}` : bestOdds} at ${data.bestBook}. Books used: ${data.prices.length}. Model win probability: ${(
-            modelProb * 100
-          ).toFixed(2)}%. Market implied probability: ${(
-            marketImpliedProb * 100
-          ).toFixed(2)}%. Estimated edge: ${edge.toFixed(
-            2
-          )}%. Estimated EV: ${ev.toFixed(
-            2
-          )}%. Fair odds: ${fairOdds > 0 ? `+${fairOdds}` : fairOdds}. Play rating: ${playRating}.`,
+          analysis:
+            `${team} ML is showing +EV against market consensus. ` +
+            `Best price found: ${displayOdds} at ${data.bestBook}. ` +
+            `Books used: ${data.prices.length}. ` +
+            `Model win probability: ${(modelProb * 100).toFixed(2)}%. ` +
+            `Market implied probability: ${(marketImpliedProb * 100).toFixed(2)}%. ` +
+            `Estimated edge: ${edge.toFixed(2)}%. ` +
+            `Estimated EV: ${ev.toFixed(2)}%. ` +
+            `Fair odds: ${displayFairOdds}. ` +
+            `Play rating: ${playRating}.`,
           stake: 1,
           sportsbook: data.bestBook,
           sportsbook_key: data.bestBookKey,
@@ -312,13 +311,32 @@ export async function GET(req: NextRequest) {
           play_rating: playRating,
           status: 'pending',
           game_date: event.commence_time,
-        };
+        });
+      }
 
-        candidates.push(pick);
+      // Only keep the single best side from each game
+      eventCandidates.sort((a, b) => {
+        if (b.ev !== a.ev) return b.ev - a.ev;
+        if (b.edge !== a.edge) return b.edge - a.edge;
+        return Number(b.confidence) - Number(a.confidence);
+      });
+
+      if (eventCandidates.length > 0) {
+        candidates.push(eventCandidates[0]);
       }
     }
 
     candidates.sort((a, b) => {
+      const ratingRank = (rating: string) => {
+        if (rating === 'MAX PLAY') return 4;
+        if (rating === 'A+ PLAY') return 3;
+        if (rating === 'A PLAY') return 2;
+        return 1;
+      };
+
+      const ratingDiff = ratingRank(b.play_rating) - ratingRank(a.play_rating);
+      if (ratingDiff !== 0) return ratingDiff;
+
       if (b.ev !== a.ev) return b.ev - a.ev;
       if (b.edge !== a.edge) return b.edge - a.edge;
       return Number(b.confidence) - Number(a.confidence);
@@ -330,7 +348,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No qualifying sharp picks found today or tomorrow.',
+        message: 'No qualifying elite picks found today or tomorrow.',
         debug: {
           eventsChecked,
           candidatesFound: candidates.length,
