@@ -1,12 +1,12 @@
 {
   "crons": [
     {
-      "path": "/api/cron/generate-picks",
-      "schedule": "0 16 * * *"
+      "path": "/api/picks/generate",
+      "schedule": "0 15 * * *"
     },
     {
-  "path": "/api/cron/grade-picks",
-  "schedule": "0 8 * * *"
-}
+      "path": "/api/picks/generate",
+      "schedule": "0 19 * * *"
+    }
   ]
 }
