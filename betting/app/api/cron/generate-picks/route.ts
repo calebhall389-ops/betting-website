@@ -3,6 +3,22 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
+type OddsOutcome = {
+  name: string;
+  price: number;
+};
+
+type OddsMarket = {
+  key: string;
+  outcomes: OddsOutcome[];
+};
+
+type OddsBookmaker = {
+  key: string;
+  title: string;
+  markets: OddsMarket[];
+};
+
 type OddsEvent = {
   id: string;
   sport_key: string;
@@ -10,20 +26,17 @@ type OddsEvent = {
   commence_time: string;
   home_team: string;
   away_team: string;
-  bookmakers: Array<{
-    key: string;
-    title: string;
-    markets: Array<{
-      key: string;
-      outcomes: Array<{
-        name: string;
-        price: number;
-      }>;
-    }>;
-  }>;
+  bookmakers?: OddsBookmaker[];
 };
 
-type Candidate = {
+type SideData = {
+  prices: number[];
+  bestPrice: number;
+  bestBook: string;
+  bestBookKey: string;
+};
+
+type CandidatePick = {
   sport: string;
   game: string;
   pick: string;
@@ -31,24 +44,14 @@ type Candidate = {
   confidence: string;
   analysis: string;
   stake: number;
-  result: string;
   sportsbook: string;
-  play_rating: string;
+  sportsbook_key: string;
   edge: number;
   ev: number;
-  pick_date: string;
-  dedupe_key: string;
+  play_rating: string;
+  status: string;
+  game_date: string;
 };
-
-const MAJOR_BOOKS = new Set([
-  'draftkings',
-  'fanduel',
-  'betmgm',
-  'caesars',
-  'espnbet',
-  'betrivers',
-  'fanatics',
-]);
 
 function getSupabase() {
   const url =
@@ -64,287 +67,321 @@ function getSupabase() {
   return createClient(url, serviceRoleKey);
 }
 
-function getBaseUrl(req: NextRequest) {
-  const envUrl = process.env.NEXT_PUBLIC_SITE_URL;
-  if (envUrl) return envUrl;
-
-  const host = req.headers.get('host');
-  const proto = req.headers.get('x-forwarded-proto') ?? 'https';
-
-  if (host) return `${proto}://${host}`;
-
-  return 'http://localhost:3000';
-}
-
-function getArizonaYmd(date: Date) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Phoenix',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
-}
-
-function getArizonaHour(date: Date) {
-  return Number(
-    new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/Phoenix',
-      hour: '2-digit',
-      hour12: false,
-    }).format(date)
-  );
-}
-
-function addDaysYmd(base: Date, days: number) {
-  const d = new Date(base);
-  d.setUTCDate(d.getUTCDate() + days);
-  return getArizonaYmd(d);
-}
-
-function americanToImpliedProb(price: number) {
-  if (price > 0) {
-    return 100 / (price + 100);
+function americanToImpliedProb(odds: number): number {
+  if (odds > 0) {
+    return 100 / (odds + 100);
   }
-  return Math.abs(price) / (Math.abs(price) + 100);
+  return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
-function probToAmerican(prob: number) {
-  if (prob <= 0 || prob >= 1) {
-    throw new Error(`Invalid probability for conversion: ${prob}`);
-  }
-
+function impliedProbToAmerican(prob: number): number {
+  if (prob <= 0 || prob >= 1) return 0;
   if (prob >= 0.5) {
     return Math.round(-(prob / (1 - prob)) * 100);
   }
-
   return Math.round(((1 - prob) / prob) * 100);
 }
 
-function calcEvPercent(modelProb: number, americanOdds: number) {
+function expectedValue(modelProb: number, americanOdds: number): number {
   const decimalOdds =
     americanOdds > 0
       ? 1 + americanOdds / 100
       : 1 + 100 / Math.abs(americanOdds);
 
-  const ev = modelProb * (decimalOdds - 1) - (1 - modelProb);
-  return ev * 100;
+  return modelProb * (decimalOdds - 1) - (1 - modelProb);
 }
 
-function getPlayRating(edge: number, ev: number) {
-  if (edge >= 5 && ev >= 4) return 'MAX PLAY';
-  if (edge >= 3.75 && ev >= 3.5) return 'A PLAY';
+function isSameDay(dateA: Date, dateB: Date): boolean {
+  return (
+    dateA.getUTCFullYear() === dateB.getUTCFullYear() &&
+    dateA.getUTCMonth() === dateB.getUTCMonth() &&
+    dateA.getUTCDate() === dateB.getUTCDate()
+  );
+}
+
+function getPlayRating(evPct: number, edgePct: number, modelProb: number): string {
+  if (evPct >= 15 && edgePct >= 6 && modelProb >= 0.6) {
+    return 'MAX PLAY';
+  }
+  if (evPct >= 12 && edgePct >= 5 && modelProb >= 0.55) {
+    return 'A+ PLAY';
+  }
+  if (evPct >= 10 && edgePct >= 4.5) {
+    return 'A PLAY';
+  }
+  if (evPct >= 8 && edgePct >= 4) {
+    return 'B+ PLAY';
+  }
   return 'B PLAY';
 }
 
-function getConfidence(modelProb: number) {
-  return `${Math.round(modelProb * 100)}`;
-}
-
-function normalizeSportLabel(sportTitle: string) {
-  if (sportTitle.includes('Baseball')) return 'MLB';
-  if (sportTitle.includes('Basketball')) return 'NBA';
-  if (sportTitle.includes('Hockey')) return 'NHL';
-  if (sportTitle.includes('Football')) return 'NFL';
-  return sportTitle;
-}
-
-async function fetchOddsEvents(baseUrl: string) {
-  const res = await fetch(`${baseUrl}/api/odds`, {
-    method: 'GET',
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Failed to fetch odds: ${text}`);
+async function fetchOdds(): Promise<OddsEvent[]> {
+  const apiKey = process.env.ODDS_API_KEY;
+  if (!apiKey) {
+    throw new Error('Missing ODDS_API_KEY');
   }
 
-  const json = await res.json();
+  const sports = [
+    'baseball_mlb',
+    'basketball_nba',
+    'icehockey_nhl',
+    'americanfootball_nfl',
+  ];
 
-  if (!json?.success || !Array.isArray(json?.data)) {
-    throw new Error('Odds endpoint did not return expected data shape');
+  const regions = 'us';
+  const markets = 'h2h';
+  const oddsFormat = 'american';
+  const dateFormat = 'iso';
+
+  const allEvents: OddsEvent[] = [];
+
+  for (const sport of sports) {
+    const url =
+      `https://api.the-odds-api.com/v4/sports/${sport}/odds` +
+      `?apiKey=${apiKey}` +
+      `&regions=${regions}` +
+      `&markets=${markets}` +
+      `&oddsFormat=${oddsFormat}` +
+      `&dateFormat=${dateFormat}`;
+
+    const res = await fetch(url, {
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Odds API failed for ${sport}: ${text}`);
+    }
+
+    const data = (await res.json()) as OddsEvent[];
+    allEvents.push(...data);
   }
 
-  return json.data as OddsEvent[];
+  return allEvents;
 }
 
-async function handleGenerate(req: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
-    const authHeader = req.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
+    const authHeader = req.headers.get('authorization');
+    const cronHeader = req.headers.get('x-cron-secret');
 
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    if (
+      cronSecret &&
+      authHeader !== `Bearer ${cronSecret}` &&
+      cronHeader !== cronSecret
+    ) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const baseUrl = getBaseUrl(req);
     const supabase = getSupabase();
-    const events = await fetchOddsEvents(baseUrl);
+    const oddsEvents = await fetchOdds();
+
+    const SHARP_BOOKS = [
+      'draftkings',
+      'fanduel',
+      'betmgm',
+      'caesars',
+      'espnbet',
+      'betrivers',
+      'pointsbetus',
+    ];
+
+    const MIN_BOOKS = 2;
+    const MIN_EDGE = 4.0;
+    const MIN_EV = 8.0;
+    const MIN_CONFIDENCE = 40;
+    const MAX_PICKS_PER_RUN = 12;
 
     const now = new Date();
-    const todayYmd = getArizonaYmd(now);
-    const tomorrowYmd = addDaysYmd(now, 1);
-    const allowedDates = new Set([todayYmd, tomorrowYmd]);
+    const tomorrow = new Date(now);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
 
-    const phoenixHour = getArizonaHour(now);
-    const isEarly = phoenixHour < 14;
-
-    const picksToInsert: Candidate[] = [];
+    const candidates: CandidatePick[] = [];
     let eventsChecked = 0;
-    let candidatesFound = 0;
 
-    for (const event of events) {
-      const commence = new Date(event.commence_time);
-      const eventYmd = getArizonaYmd(commence);
+    for (const event of oddsEvents) {
+      const gameDate = new Date(event.commence_time);
 
-      if (!allowedDates.has(eventYmd)) continue;
+      const isToday = isSameDay(gameDate, now);
+      const isTomorrow = isSameDay(gameDate, tomorrow);
 
-      eventsChecked += 1;
+      if (!isToday && !isTomorrow) continue;
 
-      const sides: Record<
-        string,
-        {
-          prices: Array<{ bookKey: string; bookTitle: string; price: number }>;
-        }
-      > = {
-        [event.home_team]: { prices: [] },
-        [event.away_team]: { prices: [] },
-      };
+      if (!event.bookmakers || event.bookmakers.length === 0) continue;
 
-      for (const bookmaker of event.bookmakers ?? []) {
-        if (!MAJOR_BOOKS.has(bookmaker.key)) continue;
+      if (gameDate.getTime() < now.getTime() && !isToday) continue;
 
+      eventsChecked++;
+
+      const filteredBooks = event.bookmakers.filter((book) =>
+        SHARP_BOOKS.includes(book.key)
+      );
+
+      if (filteredBooks.length < MIN_BOOKS) continue;
+
+      const sides: Record<string, SideData> = {};
+
+      for (const bookmaker of filteredBooks) {
         const h2hMarket = bookmaker.markets?.find((m) => m.key === 'h2h');
-        if (!h2hMarket) continue;
+        if (!h2hMarket?.outcomes?.length) continue;
 
-        for (const outcome of h2hMarket.outcomes ?? []) {
-          if (!sides[outcome.name]) continue;
+        for (const outcome of h2hMarket.outcomes) {
+          if (typeof outcome.price !== 'number') continue;
 
-          sides[outcome.name].prices.push({
-            bookKey: bookmaker.key,
-            bookTitle: bookmaker.title,
-            price: outcome.price,
-          });
+          if (!sides[outcome.name]) {
+            sides[outcome.name] = {
+              prices: [],
+              bestPrice: outcome.price,
+              bestBook: bookmaker.title,
+              bestBookKey: bookmaker.key,
+            };
+          }
+
+          sides[outcome.name].prices.push(outcome.price);
+
+          if (outcome.price > sides[outcome.name].bestPrice) {
+            sides[outcome.name].bestPrice = outcome.price;
+            sides[outcome.name].bestBook = bookmaker.title;
+            sides[outcome.name].bestBookKey = bookmaker.key;
+          }
         }
       }
 
       for (const [team, data] of Object.entries(sides)) {
-        if (data.prices.length < 3) continue;
+        if (!data || data.prices.length < MIN_BOOKS) continue;
 
         const consensusProb =
           data.prices
-            .map((p) => americanToImpliedProb(p.price))
-            .reduce((sum, p) => sum + p, 0) / data.prices.length;
+            .map((price) => americanToImpliedProb(price))
+            .reduce((sum, prob) => sum + prob, 0) / data.prices.length;
 
-        const modelProb = Math.min(
-          consensusProb + (isEarly ? 0.028 : 0.012),
-          0.85
-        );
+        const modelProb = consensusProb * 1.08;
 
-        const bestPrice = data.prices.reduce((best, current) =>
-          current.price > best.price ? current : best
-        );
+        if (modelProb <= 0 || modelProb >= 0.95) continue;
 
-        const marketProb = americanToImpliedProb(bestPrice.price);
-        const edge = (modelProb - marketProb) * 100;
-        const ev = calcEvPercent(modelProb, bestPrice.price);
+        const bestOdds = data.bestPrice;
+        const marketImpliedProb = americanToImpliedProb(bestOdds);
+        const edge = (modelProb - marketImpliedProb) * 100;
+        const ev = expectedValue(modelProb, bestOdds) * 100;
+        const confidence = Math.round(modelProb * 100);
 
-        if (edge < 3.25) continue;
-        if (ev < 3) continue;
+        if (
+          edge < MIN_EDGE ||
+          ev < MIN_EV ||
+          confidence < MIN_CONFIDENCE
+        ) {
+          continue;
+        }
 
-        const playRating = getPlayRating(edge, ev);
-        const sport = normalizeSportLabel(event.sport_title);
-        const game = `${event.away_team} at ${event.home_team}`;
-        const pick = `${team} ML`;
-        const confidence = getConfidence(modelProb);
-        const fairOdds = probToAmerican(modelProb);
+        const playRating = getPlayRating(ev, edge, modelProb);
+        const fairOdds = impliedProbToAmerican(modelProb);
 
-        const analysis =
-          `${pick} shows value versus the consensus market. ` +
-          `Best price found: ${bestPrice.price > 0 ? `+${bestPrice.price}` : bestPrice.price} at ${bestPrice.bookTitle}. ` +
-          `Books used: ${data.prices.length}. ` +
-          `Model win probability: ${(modelProb * 100).toFixed(2)}%. ` +
-          `Market implied probability: ${(marketProb * 100).toFixed(2)}%. ` +
-          `Estimated edge: ${edge.toFixed(2)}%. ` +
-          `Estimated EV: ${ev.toFixed(2)}%. ` +
-          `Fair odds: ${fairOdds > 0 ? `+${fairOdds}` : fairOdds}. ` +
-          `Play rating: ${playRating}.`;
-
-        const dedupeKey = `${game}__${pick}__${eventYmd}`;
-
-        picksToInsert.push({
-          sport,
-          game,
-          pick,
-          odds: bestPrice.price,
-          confidence,
-          analysis,
+        const pick: CandidatePick = {
+          sport:
+            event.sport_title === 'American Football'
+              ? 'NFL'
+              : event.sport_title === 'Baseball'
+              ? 'MLB'
+              : event.sport_title === 'Basketball'
+              ? 'NBA'
+              : event.sport_title === 'Ice Hockey'
+              ? 'NHL'
+              : event.sport_title,
+          game: `${event.away_team} at ${event.home_team}`,
+          pick: `${team} ML`,
+          odds: bestOdds,
+          confidence: String(confidence),
+          analysis: `${team} ML is showing +EV against market consensus. Best price found: ${bestOdds > 0 ? `+${bestOdds}` : bestOdds} at ${data.bestBook}. Books used: ${data.prices.length}. Model win probability: ${(
+            modelProb * 100
+          ).toFixed(2)}%. Market implied probability: ${(
+            marketImpliedProb * 100
+          ).toFixed(2)}%. Estimated edge: ${edge.toFixed(
+            2
+          )}%. Estimated EV: ${ev.toFixed(
+            2
+          )}%. Fair odds: ${fairOdds > 0 ? `+${fairOdds}` : fairOdds}. Play rating: ${playRating}.`,
           stake: 1,
-          result: 'pending',
-          sportsbook: bestPrice.bookTitle,
-          play_rating: playRating,
+          sportsbook: data.bestBook,
+          sportsbook_key: data.bestBookKey,
           edge: Number(edge.toFixed(2)),
           ev: Number(ev.toFixed(2)),
-          pick_date: eventYmd,
-          dedupe_key: dedupeKey,
-        });
+          play_rating: playRating,
+          status: 'pending',
+          game_date: event.commence_time,
+        };
 
-        candidatesFound += 1;
+        candidates.push(pick);
       }
     }
 
-    const finalPicks = picksToInsert
-      .sort((a, b) => {
-        if (b.ev !== a.ev) return b.ev - a.ev;
-        if (b.edge !== a.edge) return b.edge - a.edge;
-        return a.game.localeCompare(b.game);
-      })
-      .slice(0, 5);
+    candidates.sort((a, b) => {
+      if (b.ev !== a.ev) return b.ev - a.ev;
+      if (b.edge !== a.edge) return b.edge - a.edge;
+      return Number(b.confidence) - Number(a.confidence);
+    });
+
+    const finalPicks = candidates.slice(0, MAX_PICKS_PER_RUN);
 
     if (finalPicks.length === 0) {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No qualifying perfect-setup sharp picks found today.',
+        message: 'No qualifying sharp picks found today or tomorrow.',
         debug: {
           eventsChecked,
-          candidatesFound,
+          candidatesFound: candidates.length,
           finalSelected: 0,
-          phoenixHour,
-          modelMode: isEarly ? 'early' : 'late',
-          minBooks: 3,
-          minEdge: 3.25,
-          minEv: 3,
-          maxPicksPerRun: 5,
+          minBooks: MIN_BOOKS,
+          minEdge: MIN_EDGE,
+          minEv: MIN_EV,
+          minConfidence: MIN_CONFIDENCE,
+          maxPicksPerRun: MAX_PICKS_PER_RUN,
+          sharpBooks: SHARP_BOOKS,
         },
       });
     }
 
-    const { data, error } = await supabase
+    const todayStart = new Date(now);
+    todayStart.setUTCHours(0, 0, 0, 0);
+
+    const dayAfterTomorrow = new Date(tomorrow);
+    dayAfterTomorrow.setUTCDate(dayAfterTomorrow.getUTCDate() + 1);
+    dayAfterTomorrow.setUTCHours(0, 0, 0, 0);
+
+    await supabase
       .from('picks')
-      .upsert(finalPicks, {
-        onConflict: 'dedupe_key',
-      })
+      .delete()
+      .gte('game_date', todayStart.toISOString())
+      .lt('game_date', dayAfterTomorrow.toISOString())
+      .eq('status', 'pending');
+
+    const { data: insertedRows, error: insertError } = await supabase
+      .from('picks')
+      .insert(finalPicks)
       .select();
 
-    if (error) {
-      throw new Error(`Supabase insert failed: ${error.message}`);
+    if (insertError) {
+      throw new Error(`Supabase insert failed: ${insertError.message}`);
     }
 
     return NextResponse.json({
       success: true,
-      inserted: data?.length ?? 0,
-      picks: data ?? [],
+      inserted: insertedRows?.length ?? 0,
+      picks: insertedRows ?? [],
       debug: {
         eventsChecked,
-        candidatesFound,
+        candidatesFound: candidates.length,
         finalSelected: finalPicks.length,
-        phoenixHour,
-        modelMode: isEarly ? 'early' : 'late',
-        minBooks: 3,
-        minEdge: 3.25,
-        minEv: 3,
-        maxPicksPerRun: 5,
+        minBooks: MIN_BOOKS,
+        minEdge: MIN_EDGE,
+        minEv: MIN_EV,
+        minConfidence: MIN_CONFIDENCE,
+        maxPicksPerRun: MAX_PICKS_PER_RUN,
+        sharpBooks: SHARP_BOOKS,
       },
     });
   } catch (error) {
@@ -356,12 +393,4 @@ async function handleGenerate(req: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-export async function GET(req: NextRequest) {
-  return handleGenerate(req);
-}
-
-export async function POST(req: NextRequest) {
-  return handleGenerate(req);
 }
