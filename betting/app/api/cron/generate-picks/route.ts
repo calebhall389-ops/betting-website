@@ -226,8 +226,9 @@ function getConsensusFairOdds(
 }
 
 function getPlayRating(edge: number, ev: number, odds: number): string {
-  if (odds > 400) {
-    if (edge >= 5 && ev >= 10) return 'B PLAY';
+  // Stricter rules for underdogs so the board stays cleaner
+  if (odds >= 200) {
+    if (edge >= 3 && ev >= 6) return 'B PLAY';
     return 'NO PLAY';
   }
 
@@ -238,8 +239,7 @@ function getPlayRating(edge: number, ev: number, odds: number): string {
 }
 
 function getStakeUnits(playRating: string, odds: number): number {
-  if (odds >= 500) return 0.5;
-  if (odds >= 300) return 1;
+  if (odds >= 200) return 1;
 
   switch (playRating) {
     case 'MAX PLAY':
@@ -331,8 +331,8 @@ export async function GET(req: NextRequest) {
         const bestPrice = data.bestPrice;
         const bestBook = data.bestBook;
 
-        // Keep picks in a cleaner, more realistic range
-        if (bestPrice > 500) continue;
+        // Keep the board realistic
+        if (bestPrice > 300) continue;
         if (bestPrice < -220) continue;
 
         const fair = getConsensusFairOdds(team, sides);
