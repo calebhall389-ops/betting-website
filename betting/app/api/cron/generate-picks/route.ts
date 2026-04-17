@@ -63,9 +63,7 @@ function getSupabase() {
 }
 
 function americanToImpliedProbability(odds: number): number {
-  if (odds > 0) {
-    return 100 / (odds + 100);
-  }
+  if (odds > 0) return 100 / (odds + 100);
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
@@ -95,13 +93,14 @@ function normalizeSportLabel(sportTitle: string): string {
   return sportTitle;
 }
 
-function getTodayIsoDateStrings() {
+function getTodayTomorrowIsoDateStrings() {
   const now = new Date();
 
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
 
   const end = new Date(now);
+  end.setDate(end.getDate() + 1);
   end.setHours(23, 59, 59, 999);
 
   return {
@@ -110,9 +109,9 @@ function getTodayIsoDateStrings() {
   };
 }
 
-function isTodayGame(commenceTime: string): boolean {
+function isTodayOrTomorrowGame(commenceTime: string): boolean {
   const gameDate = new Date(commenceTime);
-  const { startIso, endIso } = getTodayIsoDateStrings();
+  const { startIso, endIso } = getTodayTomorrowIsoDateStrings();
   const start = new Date(startIso);
   const end = new Date(endIso);
 
@@ -132,7 +131,7 @@ function getAllowedSports() {
 function getSharpBookmakerKeys() {
   return (
     process.env.PICKS_BOOKMAKERS ||
-    'fanduel,draftkings,betmgm,caesars,espnbet,fliff,bovada'
+    'fanduel,draftkings,betmgm,caesars,espnbet'
   )
     .split(',')
     .map((s) => s.trim().toLowerCase())
@@ -149,11 +148,6 @@ function getUnitSize() {
   return Number.isFinite(unitPercent) && unitPercent > 0 ? unitPercent : 0.01;
 }
 
-/**
- * Market-based estimate:
- * starts from consensus implied probability
- * then gives a controlled bump for price disagreement
- */
 function estimateModelProbability(
   consensusProbability: number,
   bestPriceProbability: number
@@ -189,7 +183,7 @@ function getPlayRating({
   }
 
   if (
-    modelProbability >= 0.50 &&
+    modelProbability >= 0.5 &&
     edge >= 0.02 &&
     ev >= 0.05 &&
     odds >= -200 &&
@@ -198,11 +192,7 @@ function getPlayRating({
     return 'A PLAY';
   }
 
-  if (
-    modelProbability >= 0.10 &&
-    edge >= 0.01 &&
-    ev >= 0.03
-  ) {
+  if (modelProbability >= 0.1 && edge >= 0.01 && ev >= 0.03) {
     return 'B PLAY';
   }
 
@@ -222,7 +212,7 @@ function calculateStake({
 
   if (playRating === 'MAX PLAY') return Math.round(baseUnit * 3);
   if (playRating === 'A PLAY') return Math.round(baseUnit * 2);
-  if (playRating === 'B PLAY') return Math.round(baseUnit * 1);
+  if (playRating === 'B PLAY') return Math.round(baseUnit);
 
   return Math.round(baseUnit);
 }
@@ -286,13 +276,14 @@ export async function GET(req: NextRequest) {
       allEvents.push(...events);
     }
 
-    const todayEvents = allEvents.filter(
-      (event) => event.commence_time && isTodayGame(event.commence_time)
+    const upcomingEvents = allEvents.filter(
+      (event) =>
+        event.commence_time && isTodayOrTomorrowGame(event.commence_time)
     );
 
     const candidates: CandidatePick[] = [];
 
-    for (const event of todayEvents) {
+    for (const event of upcomingEvents) {
       const bookmakers = (event.bookmakers || []).filter(
         (b) => Array.isArray(b.markets) && b.markets.length > 0
       );
@@ -346,8 +337,7 @@ export async function GET(req: NextRequest) {
         const edge = modelProbability - bestPriceProbability;
         const ev = expectedValue(modelProbability, sideData.bestPrice);
 
-        // Tuned filters: still sharp, but less restrictive
-        if (modelProbability < 0.10) continue;
+        if (modelProbability < 0.1) continue;
         if (edge < 0.01) continue;
         if (ev < 0.03) continue;
         if (sideData.bestPrice > 350) continue;
@@ -414,18 +404,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No qualifying sharp picks found today.',
+        message: 'No qualifying sharp picks found for today or tomorrow.',
         debug: {
-          eventsChecked: todayEvents.length,
+          eventsChecked: upcomingEvents.length,
           candidatesFound: candidates.length,
         },
       });
     }
 
-    const clearToday = process.env.CLEAR_OLD_PICKS_BEFORE_INSERT === 'true';
+    const clearWindow =
+      process.env.CLEAR_OLD_PICKS_BEFORE_INSERT === 'true';
 
-    if (clearToday) {
-      const { startIso, endIso } = getTodayIsoDateStrings();
+    if (clearWindow) {
+      const { startIso, endIso } = getTodayTomorrowIsoDateStrings();
 
       const { error: deleteError } = await supabase
         .from('picks')
@@ -472,7 +463,7 @@ export async function GET(req: NextRequest) {
       inserted: data?.length || 0,
       picks: data || [],
       debug: {
-        eventsChecked: todayEvents.length,
+        eventsChecked: upcomingEvents.length,
         candidatesFound: candidates.length,
         finalPicks: finalPicks.length,
       },
