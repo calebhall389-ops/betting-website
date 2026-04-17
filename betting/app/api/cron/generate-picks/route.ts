@@ -76,9 +76,7 @@ function getOddsApiKey() {
 }
 
 function americanToImpliedProbability(odds: number): number {
-  if (odds > 0) {
-    return 100 / (odds + 100);
-  }
+  if (odds > 0) return 100 / (odds + 100);
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
@@ -88,9 +86,7 @@ function americanToDecimal(odds: number): number {
 }
 
 function decimalToAmerican(decimalOdds: number): number {
-  if (decimalOdds >= 2) {
-    return Math.round((decimalOdds - 1) * 100);
-  }
+  if (decimalOdds >= 2) return Math.round((decimalOdds - 1) * 100);
   return Math.round(-100 / (decimalOdds - 1));
 }
 
@@ -229,14 +225,20 @@ function getConsensusFairOdds(
   };
 }
 
-function getPlayRating(edge: number, ev: number): string {
-  if (edge >= 6 && ev >= 10) return 'MAX PLAY';
-  if (edge >= 4 && ev >= 6) return 'A PLAY';
-  if (edge >= 3 && ev >= 4) return 'B PLAY';
+function getPlayRating(edge: number, ev: number, odds: number): string {
+  if (odds > 400) {
+    if (edge >= 5 && ev >= 10) return 'B PLAY';
+    return 'NO PLAY';
+  }
+
+  if (edge >= 5 && ev >= 8) return 'MAX PLAY';
+  if (edge >= 3.5 && ev >= 5) return 'A PLAY';
+  if (edge >= 2 && ev >= 3) return 'B PLAY';
   return 'NO PLAY';
 }
 
 function getStakeUnits(playRating: string, odds: number): number {
+  if (odds >= 500) return 0.5;
   if (odds >= 300) return 1;
 
   switch (playRating) {
@@ -329,10 +331,9 @@ export async function GET(req: NextRequest) {
         const bestPrice = data.bestPrice;
         const bestBook = data.bestBook;
 
-        // Skip weak mid-range prices so the board stays sharper
-        if (bestPrice > -150 && bestPrice < 120) {
-          continue;
-        }
+        // Keep picks in a cleaner, more realistic range
+        if (bestPrice > 500) continue;
+        if (bestPrice < -220) continue;
 
         const fair = getConsensusFairOdds(team, sides);
         if (!fair) continue;
@@ -346,7 +347,7 @@ export async function GET(req: NextRequest) {
             (1 - modelProb)) *
           100;
 
-        const playRating = getPlayRating(edge, ev);
+        const playRating = getPlayRating(edge, ev, bestPrice);
         if (playRating === 'NO PLAY') continue;
 
         const stake = getStakeUnits(playRating, bestPrice);
@@ -393,9 +394,8 @@ export async function GET(req: NextRequest) {
 
     const deduped = picks.filter((pick, index, arr) => {
       return (
-        arr.findIndex(
-          (p) => p.game === pick.game && p.pick === pick.pick && p.odds === pick.odds
-        ) === index
+        arr.findIndex((p) => p.game === pick.game && p.pick === pick.pick) ===
+        index
       );
     });
 
