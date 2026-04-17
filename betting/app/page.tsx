@@ -1,296 +1,132 @@
 import Link from 'next/link';
-import { createClient } from '@supabase/supabase-js';
+import { ArrowRight, Target, TrendingUp, BarChart3, Trophy } from 'lucide-react';
 
-export const dynamic = 'force-dynamic';
-
-type PickRow = {
-  id: string;
-  created_at: string;
-  sport: string;
-  game: string;
-  pick: string;
-  odds: number;
-  confidence: string | number;
-  stake: number;
-  result: string;
-  profit: number | null;
-};
-
-function getSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !anon) {
-    throw new Error('Missing Supabase public environment variables');
-  }
-
-  return createClient(url, anon);
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-  }).format(value);
-}
-
-function formatPercent(value: number) {
-  return `${value.toFixed(1)}%`;
-}
-
-function getResultBadge(result: string) {
-  switch (result) {
-    case 'win':
-      return 'bg-green-100 text-green-700';
-    case 'loss':
-      return 'bg-red-100 text-red-700';
-    case 'push':
-      return 'bg-gray-200 text-gray-700';
-    case 'pending':
-      return 'bg-yellow-100 text-yellow-700';
-    default:
-      return 'bg-gray-100 text-gray-600';
-  }
-}
-
-function getConfidenceBadge(confidence: string | number) {
-  const level = Number(confidence);
-  switch (level) {
-    case 3:
-      return 'bg-green-100 text-green-700';
-    case 2:
-      return 'bg-blue-100 text-blue-700';
-    default:
-      return 'bg-gray-200 text-gray-700';
-  }
-}
-
-function getProfitColor(value: number | null) {
-  if (value === null) return 'text-gray-500';
-  if (value > 0) return 'text-green-600 font-semibold';
-  if (value < 0) return 'text-red-600 font-semibold';
-  return 'text-gray-600';
-}
-
-export default async function HomePage() {
-  const supabase = getSupabase();
-
-  const { data, error } = await supabase
-    .from('picks')
-    .select(
-      'id,created_at,sport,game,pick,odds,confidence,stake,result,profit'
-    )
-    .order('created_at', { ascending: false })
-    .limit(100);
-
-  if (error) {
-    return (
-      <main className="p-6">
-        <h1 className="text-3xl font-bold mb-4">Betting Dashboard</h1>
-        <p className="text-red-600">Error loading picks: {error.message}</p>
-      </main>
-    );
-  }
-
-  const picks = (data ?? []) as PickRow[];
-
-  const today = new Date().toISOString().slice(0, 10);
-  const todaysPicks = picks.filter(
-    (pick) => pick.created_at.slice(0, 10) === today
-  );
-
-  const graded = picks.filter((pick) =>
-    ['win', 'loss', 'push'].includes(pick.result)
-  );
-
-  const recentResults = graded.slice(0, 15);
-
-  const wins = graded.filter((pick) => pick.result === 'win').length;
-  const losses = graded.filter((pick) => pick.result === 'loss').length;
-  const pushes = graded.filter((pick) => pick.result === 'push').length;
-  const pending = picks.filter((pick) => pick.result === 'pending').length;
-
-  const totalStake = graded.reduce(
-    (sum, pick) => sum + Number(pick.stake ?? 0),
-    0
-  );
-
-  const totalProfit = graded.reduce(
-    (sum, pick) => sum + Number(pick.profit ?? 0),
-    0
-  );
-
-  const totalBets = graded.length;
-  const winRate = totalBets > 0 ? (wins / totalBets) * 100 : 0;
-  const roi = totalStake > 0 ? (totalProfit / totalStake) * 100 : 0;
-
+export default function HomePage() {
   return (
-    <main className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap">
-        <div>
-          <h1 className="text-3xl font-bold">Betting Dashboard</h1>
-          <p className="text-gray-500">
-            Today’s picks, tracked results, profit, and ROI.
-          </p>
+    <main className="min-h-screen bg-[#020817] text-white">
+      <section className="relative overflow-hidden border-b border-white/10">
+        <div className="absolute inset-0">
+          <div
+            className="h-full w-full bg-cover bg-center opacity-20"
+            style={{
+              backgroundImage:
+                "url('https://images.unsplash.com/photo-1547347298-4074fc3086f0?auto=format&fit=crop&w=1600&q=80')",
+            }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-[#020817]/70 via-[#020817]/85 to-[#020817]" />
         </div>
 
-        <Link
-          href="/results"
-          className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-gray-50"
-        >
-          View Full Results
-        </Link>
-      </div>
+        <div className="relative mx-auto max-w-7xl px-6 py-24 md:px-8 md:py-32">
+          <div className="max-w-3xl">
+            <div className="mb-5 inline-flex items-center rounded-full border border-emerald-400/20 bg-emerald-400/10 px-4 py-1.5 text-sm font-medium text-emerald-300">
+              Sharp picks. Best odds. Tracked results.
+            </div>
 
-      {/* Today's Picks */}
-      <section className="rounded-2xl border shadow-sm overflow-hidden">
-        <div className="p-4 border-b">
-          <h2 className="text-xl font-semibold">Today's Picks</h2>
-        </div>
+            <h1 className="text-4xl font-bold tracking-tight text-white md:text-6xl">
+              SharpEdge
+            </h1>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="p-3 text-left">Game</th>
-                <th className="p-3 text-left">Pick</th>
-                <th className="p-3 text-left">Odds</th>
-                <th className="p-3 text-left">Confidence</th>
-                <th className="p-3 text-left">Stake</th>
-                <th className="p-3 text-left">Result</th>
-              </tr>
-            </thead>
-            <tbody>
-              {todaysPicks.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-4 text-center text-gray-500">
-                    No picks generated today.
-                  </td>
-                </tr>
-              ) : (
-                todaysPicks.map((pick) => (
-                  <tr key={pick.id} className="border-t">
-                    <td className="p-3">{pick.game}</td>
-                    <td className="p-3">{pick.pick}</td>
-                    <td className="p-3">
-                      {pick.odds > 0 ? `+${pick.odds}` : pick.odds}
-                    </td>
-                    <td className="p-3">
-                      <span
-                        className={`px-2 py-1 rounded-md text-xs font-semibold ${getConfidenceBadge(
-                          pick.confidence
-                        )}`}
-                      >
-                        {pick.confidence}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      {formatMoney(Number(pick.stake))}
-                    </td>
-                    <td className="p-3">
-                      <span
-                        className={`px-2 py-1 rounded-md text-xs font-semibold capitalize ${getResultBadge(
-                          pick.result
-                        )}`}
-                      >
-                        {pick.result}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+            <p className="mt-5 max-w-2xl text-base text-slate-300 md:text-xl">
+              Find sharp picks, compare the best available odds, and track your results
+              in one clean sportsbook dashboard.
+            </p>
 
-      {/* Performance Metrics */}
-      <section className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-        {[
-          { label: 'Graded Bets', value: totalBets },
-          { label: 'Wins', value: wins },
-          { label: 'Losses', value: losses },
-          { label: 'Pushes', value: pushes },
-          { label: 'Pending', value: pending },
-          { label: 'Profit', value: formatMoney(totalProfit) },
-        ].map((stat) => (
-          <div key={stat.label} className="rounded-2xl border p-4 shadow-sm">
-            <p className="text-sm text-gray-500">{stat.label}</p>
-            <p className="text-2xl font-bold">{stat.value}</p>
+            <div className="mt-8 flex flex-col gap-4 sm:flex-row">
+              <Link
+                href="/picks"
+                className="inline-flex items-center justify-center rounded-xl bg-emerald-500 px-6 py-3 text-sm font-semibold text-white transition hover:bg-emerald-400"
+              >
+                View Today&apos;s Picks
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Link>
+
+              <Link
+                href="/odds"
+                className="inline-flex items-center justify-center rounded-xl border border-white/15 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
+              >
+                Best Odds
+              </Link>
+            </div>
           </div>
-        ))}
-      </section>
-
-      {/* ROI and Win Rate */}
-      <section className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-2xl border p-4 shadow-sm">
-          <p className="text-sm text-gray-500">Win Rate</p>
-          <p className="text-2xl font-bold">
-            {formatPercent(winRate)}
-          </p>
-        </div>
-        <div className="rounded-2xl border p-4 shadow-sm">
-          <p className="text-sm text-gray-500">ROI</p>
-          <p className="text-2xl font-bold">
-            {formatPercent(roi)}
-          </p>
         </div>
       </section>
 
-      {/* Recent Results */}
-      <section className="rounded-2xl border shadow-sm overflow-hidden">
-        <div className="p-4 border-b flex justify-between items-center">
-          <h2 className="text-xl font-semibold">Recent Results</h2>
+      <section className="mx-auto max-w-7xl px-6 py-12 md:px-8">
+        <div className="mb-6">
+          <h2 className="text-2xl font-bold text-white">Quick Access</h2>
+          <p className="mt-2 text-sm text-slate-400">
+            Jump straight to the tools you use most.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Link
+            href="/picks"
+            className="group rounded-2xl border border-white/10 bg-[#06101f] p-6 transition hover:border-emerald-400/30 hover:bg-[#0a1628]"
+          >
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
+              <Target className="h-6 w-6" />
+            </div>
+            <h3 className="text-lg font-semibold text-white">Picks</h3>
+            <p className="mt-2 text-sm text-slate-400">
+              View today&apos;s sharpest betting opportunities.
+            </p>
+            <span className="mt-5 inline-flex items-center text-sm font-medium text-emerald-300">
+              Open Picks
+              <ArrowRight className="ml-2 h-4 w-4 transition group-hover:translate-x-1" />
+            </span>
+          </Link>
+
+          <Link
+            href="/props"
+            className="group rounded-2xl border border-white/10 bg-[#06101f] p-6 transition hover:border-emerald-400/30 hover:bg-[#0a1628]"
+          >
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
+              <TrendingUp className="h-6 w-6" />
+            </div>
+            <h3 className="text-lg font-semibold text-white">Props</h3>
+            <p className="mt-2 text-sm text-slate-400">
+              Check player prop opportunities and value spots.
+            </p>
+            <span className="mt-5 inline-flex items-center text-sm font-medium text-emerald-300">
+              Open Props
+              <ArrowRight className="ml-2 h-4 w-4 transition group-hover:translate-x-1" />
+            </span>
+          </Link>
+
+          <Link
+            href="/odds"
+            className="group rounded-2xl border border-white/10 bg-[#06101f] p-6 transition hover:border-emerald-400/30 hover:bg-[#0a1628]"
+          >
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
+              <BarChart3 className="h-6 w-6" />
+            </div>
+            <h3 className="text-lg font-semibold text-white">Odds</h3>
+            <p className="mt-2 text-sm text-slate-400">
+              Compare lines and find the best available prices.
+            </p>
+            <span className="mt-5 inline-flex items-center text-sm font-medium text-emerald-300">
+              Open Odds
+              <ArrowRight className="ml-2 h-4 w-4 transition group-hover:translate-x-1" />
+            </span>
+          </Link>
+
           <Link
             href="/results"
-            className="text-sm text-blue-600 hover:underline"
+            className="group rounded-2xl border border-white/10 bg-[#06101f] p-6 transition hover:border-emerald-400/30 hover:bg-[#0a1628]"
           >
-            See All
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
+              <Trophy className="h-6 w-6" />
+            </div>
+            <h3 className="text-lg font-semibold text-white">Results</h3>
+            <p className="mt-2 text-sm text-slate-400">
+              Review completed plays and track performance.
+            </p>
+            <span className="mt-5 inline-flex items-center text-sm font-medium text-emerald-300">
+              Open Results
+              <ArrowRight className="ml-2 h-4 w-4 transition group-hover:translate-x-1" />
+            </span>
           </Link>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="p-3 text-left">Game</th>
-                <th className="p-3 text-left">Pick</th>
-                <th className="p-3 text-left">Result</th>
-                <th className="p-3 text-left">Profit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentResults.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="p-4 text-center text-gray-500">
-                    No graded results yet.
-                  </td>
-                </tr>
-              ) : (
-                recentResults.map((pick) => (
-                  <tr key={pick.id} className="border-t">
-                    <td className="p-3">{pick.game}</td>
-                    <td className="p-3">{pick.pick}</td>
-                    <td className="p-3">
-                      <span
-                        className={`px-2 py-1 rounded-md text-xs font-semibold capitalize ${getResultBadge(
-                          pick.result
-                        )}`}
-                      >
-                        {pick.result}
-                      </span>
-                    </td>
-                    <td className={`p-3 ${getProfitColor(pick.profit)}`}>
-                      {pick.profit === null
-                        ? '-'
-                        : formatMoney(Number(pick.profit))}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
         </div>
       </section>
     </main>
