@@ -237,7 +237,7 @@ async function handleGenerate(req: NextRequest) {
             .reduce((sum, p) => sum + p, 0) / data.prices.length;
 
         const modelProb = Math.min(
-          consensusProb + (isEarly ? 0.045 : 0.025),
+          consensusProb + (isEarly ? 0.03 : 0.015),
           0.85
         );
 
@@ -249,8 +249,8 @@ async function handleGenerate(req: NextRequest) {
         const edge = (modelProb - marketProb) * 100;
         const ev = calcEvPercent(modelProb, bestPrice.price);
 
-        if (edge < 2) continue;
-        if (ev < 1.5) continue;
+        if (edge < 2.5) continue;
+        if (ev < 2) continue;
 
         const playRating = getPlayRating(edge, ev);
         const sport = normalizeSportLabel(event.sport_title);
