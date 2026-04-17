@@ -85,6 +85,16 @@ function getArizonaYmd(date: Date) {
   }).format(date);
 }
 
+function getArizonaHour(date: Date) {
+  return Number(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Phoenix',
+      hour: '2-digit',
+      hour12: false,
+    }).format(date)
+  );
+}
+
 function addDaysYmd(base: Date, days: number) {
   const d = new Date(base);
   d.setUTCDate(d.getUTCDate() + days);
@@ -176,6 +186,9 @@ async function handleGenerate(req: NextRequest) {
     const tomorrowYmd = addDaysYmd(now, 1);
     const allowedDates = new Set([todayYmd, tomorrowYmd]);
 
+    const phoenixHour = getArizonaHour(now);
+    const isEarly = phoenixHour < 14;
+
     const picksToInsert: Candidate[] = [];
     let eventsChecked = 0;
     let candidatesFound = 0;
@@ -223,14 +236,10 @@ async function handleGenerate(req: NextRequest) {
             .map((p) => americanToImpliedProb(p.price))
             .reduce((sum, p) => sum + p, 0) / data.prices.length;
 
-        /**
-         * MODEL LOGIC
-         *
-         * This uses a simple “consensus + small edge” placeholder.
-         * If your current route already has a stronger model, replace ONLY this section
-         * with your existing model probability logic.
-         */
-        const modelProb = Math.min(consensusProb + 0.025, 0.85);
+        const modelProb = Math.min(
+          consensusProb + (isEarly ? 0.045 : 0.025),
+          0.85
+        );
 
         const bestPrice = data.prices.reduce((best, current) =>
           current.price > best.price ? current : best
@@ -291,6 +300,8 @@ async function handleGenerate(req: NextRequest) {
         debug: {
           eventsChecked,
           candidatesFound,
+          phoenixHour,
+          modelMode: isEarly ? 'early' : 'late',
         },
       });
     }
@@ -313,6 +324,8 @@ async function handleGenerate(req: NextRequest) {
       debug: {
         eventsChecked,
         candidatesFound,
+        phoenixHour,
+        modelMode: isEarly ? 'early' : 'late',
       },
     });
   } catch (error) {
