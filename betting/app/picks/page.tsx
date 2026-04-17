@@ -1,4 +1,7 @@
 import { Target } from 'lucide-react';
+import { getSupabaseAdmin } from '@/lib/supabase';
+
+export const dynamic = 'force-dynamic';
 
 type Pick = {
   id: string;
@@ -18,15 +21,29 @@ type Pick = {
 };
 
 async function getPregamePicks(): Promise<Pick[]> {
-  const baseUrl =
-    process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+  const supabase = getSupabaseAdmin();
 
-  const res = await fetch(`${baseUrl}/api/picks`, {
-    cache: 'no-store',
-  });
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
 
-  const json = await res.json();
-  return json?.picks ?? [];
+  const end = new Date(now);
+  end.setDate(end.getDate() + 1);
+  end.setHours(23, 59, 59, 999);
+
+  const { data, error } = await supabase
+    .from('picks')
+    .select('*')
+    .eq('pick_type', 'pregame')
+    .gte('created_at', start.toISOString())
+    .lte('created_at', end.toISOString())
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as Pick[];
 }
 
 function formatOdds(odds: number) {
