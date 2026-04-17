@@ -131,8 +131,8 @@ function calcEvPercent(modelProb: number, americanOdds: number) {
 }
 
 function getPlayRating(edge: number, ev: number) {
-  if (edge >= 5 && ev >= 4) return 'MAX PLAY';
-  if (edge >= 3.5 && ev >= 2.5) return 'A PLAY';
+  if (edge >= 6 && ev >= 5) return 'MAX PLAY';
+  if (edge >= 4.5 && ev >= 4) return 'A PLAY';
   return 'B PLAY';
 }
 
@@ -229,7 +229,7 @@ async function handleGenerate(req: NextRequest) {
       }
 
       for (const [team, data] of Object.entries(sides)) {
-        if (data.prices.length < 2) continue;
+        if (data.prices.length < 3) continue;
 
         const consensusProb =
           data.prices
@@ -237,7 +237,7 @@ async function handleGenerate(req: NextRequest) {
             .reduce((sum, p) => sum + p, 0) / data.prices.length;
 
         const modelProb = Math.min(
-          consensusProb + (isEarly ? 0.03 : 0.015),
+          consensusProb + (isEarly ? 0.028 : 0.012),
           0.85
         );
 
@@ -249,8 +249,8 @@ async function handleGenerate(req: NextRequest) {
         const edge = (modelProb - marketProb) * 100;
         const ev = calcEvPercent(modelProb, bestPrice.price);
 
-        if (edge < 2.5) continue;
-        if (ev < 2) continue;
+        if (edge < 3.5) continue;
+        if (ev < 3) continue;
 
         const playRating = getPlayRating(edge, ev);
         const sport = normalizeSportLabel(event.sport_title);
@@ -262,6 +262,7 @@ async function handleGenerate(req: NextRequest) {
         const analysis =
           `${pick} shows value versus the consensus market. ` +
           `Best price found: ${bestPrice.price > 0 ? `+${bestPrice.price}` : bestPrice.price} at ${bestPrice.bookTitle}. ` +
+          `Books used: ${data.prices.length}. ` +
           `Model win probability: ${(modelProb * 100).toFixed(2)}%. ` +
           `Market implied probability: ${(marketProb * 100).toFixed(2)}%. ` +
           `Estimated edge: ${edge.toFixed(2)}%. ` +
@@ -296,12 +297,15 @@ async function handleGenerate(req: NextRequest) {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No qualifying sharp picks found today.',
+        message: 'No qualifying pro-level sharp picks found today.',
         debug: {
           eventsChecked,
           candidatesFound,
           phoenixHour,
           modelMode: isEarly ? 'early' : 'late',
+          minBooks: 3,
+          minEdge: 3.5,
+          minEv: 3,
         },
       });
     }
@@ -326,6 +330,9 @@ async function handleGenerate(req: NextRequest) {
         candidatesFound,
         phoenixHour,
         modelMode: isEarly ? 'early' : 'late',
+        minBooks: 3,
+        minEdge: 3.5,
+        minEv: 3,
       },
     });
   } catch (error) {
