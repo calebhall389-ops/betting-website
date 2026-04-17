@@ -69,18 +69,6 @@ function americanToImpliedProbability(odds: number): number {
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
-function impliedProbabilityToAmerican(probability: number): number {
-  if (probability <= 0 || probability >= 1) {
-    throw new Error('Probability must be between 0 and 1.');
-  }
-
-  if (probability >= 0.5) {
-    return Math.round((-probability / (1 - probability)) * 100);
-  }
-
-  return Math.round(((1 - probability) / probability) * 100);
-}
-
 function decimalFromAmerican(odds: number): number {
   if (odds > 0) return 1 + odds / 100;
   return 1 + 100 / Math.abs(odds);
@@ -109,6 +97,7 @@ function normalizeSportLabel(sportTitle: string): string {
 
 function getTodayIsoDateStrings() {
   const now = new Date();
+
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
 
@@ -131,15 +120,13 @@ function isTodayGame(commenceTime: string): boolean {
 }
 
 function getAllowedSports() {
-  const sports = (
+  return (
     process.env.PICKS_SPORTS ||
     'baseball_mlb,basketball_nba,icehockey_nhl,americanfootball_nfl'
   )
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-
-  return sports;
 }
 
 function getSharpBookmakerKeys() {
@@ -163,11 +150,9 @@ function getUnitSize() {
 }
 
 /**
- * This is a simple market-based model.
- * It starts from consensus implied probability and slightly boosts/dings it
- * based on best-price disagreement.
- *
- * It is not a true predictive model, but it is clean and consistent.
+ * Market-based estimate:
+ * starts from consensus implied probability
+ * then gives a controlled bump for price disagreement
  */
 function estimateModelProbability(
   consensusProbability: number,
@@ -175,10 +160,8 @@ function estimateModelProbability(
 ): number {
   const edgeSignal = consensusProbability - bestPriceProbability;
 
-  // controlled bump instead of wild scaling
   let modelProbability = consensusProbability + edgeSignal * 0.65;
 
-  // clamp to realistic range
   modelProbability = Math.max(0.02, Math.min(0.85, modelProbability));
 
   return modelProbability;
@@ -196,29 +179,29 @@ function getPlayRating({
   odds: number;
 }): string {
   if (
-    modelProbability >= 0.57 &&
-    edge >= 0.05 &&
-    ev >= 0.10 &&
-    odds >= -200 &&
-    odds <= 200
+    modelProbability >= 0.54 &&
+    edge >= 0.03 &&
+    ev >= 0.08 &&
+    odds >= -180 &&
+    odds <= 180
   ) {
     return 'MAX PLAY';
   }
 
   if (
-    modelProbability >= 0.52 &&
-    edge >= 0.035 &&
-    ev >= 0.075 &&
-    odds >= -250 &&
-    odds <= 250
+    modelProbability >= 0.50 &&
+    edge >= 0.02 &&
+    ev >= 0.05 &&
+    odds >= -200 &&
+    odds <= 220
   ) {
     return 'A PLAY';
   }
 
   if (
-    modelProbability >= 0.48 &&
-    edge >= 0.025 &&
-    ev >= 0.05
+    modelProbability >= 0.10 &&
+    edge >= 0.01 &&
+    ev >= 0.03
   ) {
     return 'B PLAY';
   }
@@ -363,12 +346,12 @@ export async function GET(req: NextRequest) {
         const edge = modelProbability - bestPriceProbability;
         const ev = expectedValue(modelProbability, sideData.bestPrice);
 
-        // HARD FILTERS FOR SHARPER PICKS
-        if (modelProbability < 0.12) continue; // reject very low-probability longshots
-        if (edge < 0.02) continue; // need at least 2% true edge
-        if (ev < 0.05) continue; // need at least 5% EV
-        if (sideData.bestPrice > 500) continue; // reject crazy longshots
-        if (sideData.bestPrice < -250) continue; // reject huge favorites
+        // Tuned filters: still sharp, but less restrictive
+        if (modelProbability < 0.10) continue;
+        if (edge < 0.01) continue;
+        if (ev < 0.03) continue;
+        if (sideData.bestPrice > 350) continue;
+        if (sideData.bestPrice < -200) continue;
 
         const playRating = getPlayRating({
           modelProbability,
@@ -418,14 +401,12 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // sort strongest first
     candidates.sort((a, b) => {
       if (b.ev !== a.ev) return b.ev - a.ev;
       if (b.edge !== a.edge) return b.edge - a.edge;
       return b.confidence - a.confidence;
     });
 
-    // keep only the sharpest few per day
     const maxPicks = Number(process.env.MAX_PICKS_PER_DAY || '5');
     const finalPicks = candidates.slice(0, maxPicks);
 
@@ -441,7 +422,6 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // optional: clear today's pending picks before inserting fresh ones
     const clearToday = process.env.CLEAR_OLD_PICKS_BEFORE_INSERT === 'true';
 
     if (clearToday) {
