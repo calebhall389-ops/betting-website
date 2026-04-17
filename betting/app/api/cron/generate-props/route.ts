@@ -59,11 +59,14 @@ const PROP_SPORT_KEYS = [
 
 const MAJOR_BOOKS_SET = new Set(MAJOR_BOOKMAKERS);
 
-// loosened thresholds so props can start populating
+// more aggressive thresholds
 const MIN_BOOKS = 2;
-const MIN_EDGE = 1.75;
-const MIN_EV = 1.25;
-const MAX_PROPS_PER_RUN = 18;
+const MIN_EDGE = 0.9;
+const MIN_EV = 0.5;
+const MAX_PROPS_PER_RUN = 24;
+
+// small model lean toward the side with the better stale price
+const SIDE_LEAN_BONUS = 0.012; // 1.2%
 
 function getSupabase() {
   const url =
@@ -98,7 +101,6 @@ function americanToImpliedProb(price: number) {
   if (price > 0) {
     return 100 / (price + 100);
   }
-
   return Math.abs(price) / (Math.abs(price) + 100);
 }
 
@@ -113,11 +115,15 @@ function calcEvPercent(modelProb: number, americanOdds: number) {
 }
 
 function getConfidence(edge: number, ev: number) {
-  if (edge >= 5 && ev >= 4) return 5;
-  if (edge >= 4 && ev >= 3.25) return 4;
-  if (edge >= 2.75 && ev >= 2) return 3;
-  if (edge >= 1.75 && ev >= 1.25) return 2;
+  if (edge >= 4.5 && ev >= 3.5) return 5;
+  if (edge >= 3 && ev >= 2.25) return 4;
+  if (edge >= 2 && ev >= 1.5) return 3;
+  if (edge >= 1 && ev >= 0.75) return 2;
   return 1;
+}
+
+function clampProb(prob: number) {
+  return Math.max(0.05, Math.min(0.95, prob));
 }
 
 function buildAnalysis(args: {
@@ -187,11 +193,22 @@ function chooseBestSide(args: {
   const overMarketProb = americanToImpliedProb(bestOver.price);
   const underMarketProb = americanToImpliedProb(bestUnder.price);
 
-  const overEdge = (overConsensus - overMarketProb) * 100;
-  const underEdge = (underConsensus - underMarketProb) * 100;
+  let adjustedOverConsensus = overConsensus;
+  let adjustedUnderConsensus = underConsensus;
 
-  const overEv = calcEvPercent(overConsensus, bestOver.price);
-  const underEv = calcEvPercent(underConsensus, bestUnder.price);
+  if (bestOver.price > bestUnder.price) {
+    adjustedOverConsensus = clampProb(overConsensus + SIDE_LEAN_BONUS);
+    adjustedUnderConsensus = clampProb(1 - adjustedOverConsensus);
+  } else if (bestUnder.price > bestOver.price) {
+    adjustedUnderConsensus = clampProb(underConsensus + SIDE_LEAN_BONUS);
+    adjustedOverConsensus = clampProb(1 - adjustedUnderConsensus);
+  }
+
+  const overEdge = (adjustedOverConsensus - overMarketProb) * 100;
+  const underEdge = (adjustedUnderConsensus - underMarketProb) * 100;
+
+  const overEv = calcEvPercent(adjustedOverConsensus, bestOver.price);
+  const underEv = calcEvPercent(adjustedUnderConsensus, bestUnder.price);
 
   const candidates: CandidateScore[] = [];
 
@@ -200,7 +217,7 @@ function chooseBestSide(args: {
       recommendation: 'over',
       bestOdds: bestOver.price,
       marketProb: overMarketProb,
-      modelProb: overConsensus,
+      modelProb: adjustedOverConsensus,
       edge: overEdge,
       ev: overEv,
       bookTitle: bestOver.bookTitle,
@@ -212,7 +229,7 @@ function chooseBestSide(args: {
       recommendation: 'under',
       bestOdds: bestUnder.price,
       marketProb: underMarketProb,
-      modelProb: underConsensus,
+      modelProb: adjustedUnderConsensus,
       edge: underEdge,
       ev: underEv,
       bookTitle: bestUnder.bookTitle,
@@ -457,6 +474,7 @@ async function handleGenerate(req: NextRequest) {
           minEdge: MIN_EDGE,
           minEv: MIN_EV,
           maxPropsPerRun: MAX_PROPS_PER_RUN,
+          sideLeanBonus: SIDE_LEAN_BONUS,
         },
       });
     }
@@ -483,6 +501,7 @@ async function handleGenerate(req: NextRequest) {
         minEdge: MIN_EDGE,
         minEv: MIN_EV,
         maxPropsPerRun: MAX_PROPS_PER_RUN,
+        sideLeanBonus: SIDE_LEAN_BONUS,
       },
     });
   } catch (error) {
