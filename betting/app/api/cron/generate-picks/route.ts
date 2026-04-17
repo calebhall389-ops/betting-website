@@ -3,37 +3,39 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-type OddsApiOutcome = {
+type OddsOutcome = {
   name: string;
   price: number;
 };
 
-type OddsApiMarket = {
+type OddsMarket = {
   key: string;
-  outcomes: OddsApiOutcome[];
+  outcomes: OddsOutcome[];
 };
 
-type OddsApiBookmaker = {
+type OddsBookmaker = {
   key: string;
   title: string;
-  markets: OddsApiMarket[];
+  markets: OddsMarket[];
 };
 
-type OddsApiEvent = {
+type OddsEvent = {
   id: string;
   sport_key: string;
   sport_title: string;
   commence_time: string;
   home_team: string;
   away_team: string;
-  bookmakers?: OddsApiBookmaker[];
+  bookmakers?: OddsBookmaker[];
 };
 
 type SidePriceData = {
   prices: number[];
-  best: number;
-  book: string;
+  bestPrice: number;
+  bestBook: string;
 };
+
+type SideMap = Record<string, SidePriceData>;
 
 type PickInsert = {
   sport: string;
@@ -43,10 +45,10 @@ type PickInsert = {
   confidence: number;
   stake: number;
   result: string;
+  analysis: string;
   sportsbook: string;
   edge: number;
   ev: number;
-  analysis: string;
   game_time: string;
   play_rating: string;
 };
@@ -54,290 +56,393 @@ type PickInsert = {
 function getSupabase() {
   const url =
     process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!url || !key) {
+  if (!url || !serviceRoleKey) {
     throw new Error(
       'Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY'
     );
   }
 
-  return createClient(url, key);
+  return createClient(url, serviceRoleKey);
 }
 
-function getSharpBookmakerKeys(): string[] {
-  return ['fanduel', 'draftkings', 'betmgm', 'caesars', 'espnbet'];
+function getOddsApiKey() {
+  const key = process.env.ODDS_API_KEY;
+  if (!key) {
+    throw new Error('Missing ODDS_API_KEY');
+  }
+  return key;
 }
 
 function americanToImpliedProbability(odds: number): number {
-  if (odds > 0) return 100 / (odds + 100);
+  if (odds > 0) {
+    return 100 / (odds + 100);
+  }
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
-function decimalFromAmerican(odds: number): number {
+function americanToDecimal(odds: number): number {
   if (odds > 0) return 1 + odds / 100;
   return 1 + 100 / Math.abs(odds);
 }
 
-function expectedValue(probability: number, odds: number): number {
-  const decimalOdds = decimalFromAmerican(odds);
-  return probability * (decimalOdds - 1) - (1 - probability);
+function decimalToAmerican(decimalOdds: number): number {
+  if (decimalOdds >= 2) {
+    return Math.round((decimalOdds - 1) * 100);
+  }
+  return Math.round(-100 / (decimalOdds - 1));
 }
 
-function formatOdds(odds: number): string {
-  return odds > 0 ? `+${odds}` : `${odds}`;
+function normalizeProbabilities(rawProbs: number[]): number[] {
+  const sum = rawProbs.reduce((acc, p) => acc + p, 0);
+  if (sum <= 0) return rawProbs;
+  return rawProbs.map((p) => p / sum);
 }
 
-function normalizeSportLabel(sport: string): string {
-  const s = sport.toUpperCase();
+function getSportLabel(sportKey: string, sportTitle: string): string {
+  const key = sportKey.toLowerCase();
 
-  if (s.includes('BASEBALL')) return 'MLB';
-  if (s.includes('NBA')) return 'NBA';
-  if (s.includes('HOCKEY')) return 'NHL';
-  if (s.includes('NFL')) return 'NFL';
+  if (key.includes('baseball_mlb')) return 'MLB';
+  if (key.includes('basketball_nba')) return 'NBA';
+  if (key.includes('icehockey_nhl')) return 'NHL';
+  if (key.includes('americanfootball_nfl')) return 'NFL';
+  if (key.includes('basketball_ncaab')) return 'NCAAB';
+  if (key.includes('americanfootball_ncaaf')) return 'NCAAF';
 
-  return sport;
+  return sportTitle;
 }
 
-function getWindow() {
+function isWithinCurrentOrNextDay(commenceTime: string) {
   const now = new Date();
+  const eventDate = new Date(commenceTime);
 
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
 
-  const end = new Date(now);
-  end.setDate(end.getDate() + 1);
-  end.setHours(23, 59, 59, 999);
+  const endOfTomorrow = new Date(startOfToday);
+  endOfTomorrow.setDate(endOfTomorrow.getDate() + 2);
+  endOfTomorrow.setMilliseconds(-1);
 
-  return { start, end };
+  return eventDate >= startOfToday && eventDate <= endOfTomorrow;
 }
 
-function isValidGame(time: string): boolean {
-  const gameDate = new Date(time);
-  const { start, end } = getWindow();
-  return gameDate >= start && gameDate <= end;
+function getAllowedBookmakers(): string[] {
+  return [
+    'draftkings',
+    'fanduel',
+    'betmgm',
+    'caesars',
+    'espnbet',
+    'betrivers',
+    'pointsbetus',
+    'ballybet',
+    'fliff',
+    'hardrockbet',
+    'betonlineag',
+    'lowvig',
+    'betparx',
+    'windcreek',
+    'thescorebet',
+  ];
 }
 
-function estimateModelProbability(
-  consensus: number,
-  best: number
-): number {
-  const edgeSignal = consensus - best;
-  const model = consensus + edgeSignal * 0.65;
-  return Math.max(0.02, Math.min(0.85, model));
+function buildSidesFromBookmakers(bookmakers: OddsBookmaker[] | undefined): SideMap {
+  const sides: SideMap = {};
+
+  if (!bookmakers || bookmakers.length === 0) return sides;
+
+  for (const bookmaker of bookmakers) {
+    for (const market of bookmaker.markets || []) {
+      if (market.key !== 'h2h') continue;
+
+      for (const outcome of market.outcomes || []) {
+        if (typeof outcome.price !== 'number' || !Number.isFinite(outcome.price)) {
+          continue;
+        }
+
+        if (!sides[outcome.name]) {
+          sides[outcome.name] = {
+            prices: [],
+            bestPrice: outcome.price,
+            bestBook: bookmaker.title,
+          };
+        }
+
+        sides[outcome.name].prices.push(outcome.price);
+
+        if (outcome.price > sides[outcome.name].bestPrice) {
+          sides[outcome.name].bestPrice = outcome.price;
+          sides[outcome.name].bestBook = bookmaker.title;
+        }
+      }
+    }
+  }
+
+  return sides;
 }
 
-function getRating(
-  probability: number,
-  edge: number,
-  ev: number,
-  odds: number
-): string {
-  if (
-    probability >= 0.54 &&
-    edge >= 0.03 &&
-    ev >= 0.08 &&
-    odds >= -180 &&
-    odds <= 180
-  ) {
-    return 'MAX PLAY';
+function getConsensusFairOdds(sideName: string, sides: SideMap): {
+  fairProbability: number;
+  fairAmericanOdds: number;
+} | null {
+  const entries = Object.entries(sides);
+
+  if (entries.length < 2) return null;
+
+  const rawProbs: number[] = [];
+  const sideNames: string[] = [];
+
+  for (const [name, data] of entries) {
+    if (!data.prices.length) continue;
+
+    const avgImplied =
+      data.prices
+        .map((price) => americanToImpliedProbability(price))
+        .reduce((sum, p) => sum + p, 0) / data.prices.length;
+
+    rawProbs.push(avgImplied);
+    sideNames.push(name);
   }
 
-  if (
-    probability >= 0.5 &&
-    edge >= 0.02 &&
-    ev >= 0.05
-  ) {
-    return 'A PLAY';
-  }
+  if (rawProbs.length < 2) return null;
 
-  if (
-    probability >= 0.1 &&
-    edge >= 0.01 &&
-    ev >= 0.03
-  ) {
-    return 'B PLAY';
-  }
+  const normalized = normalizeProbabilities(rawProbs);
+  const idx = sideNames.findIndex((name) => name === sideName);
 
-  return 'PASS';
+  if (idx === -1) return null;
+
+  const fairProbability = normalized[idx];
+  const fairAmericanOdds = decimalToAmerican(1 / fairProbability);
+
+  return {
+    fairProbability,
+    fairAmericanOdds,
+  };
 }
 
-async function fetchOdds(sport: string): Promise<OddsApiEvent[]> {
-  const key = process.env.ODDS_API_KEY;
+function getPlayRating(edge: number, ev: number): string {
+  if (edge >= 6 && ev >= 10) return 'MAX PLAY';
+  if (edge >= 4 && ev >= 6) return 'A PLAY';
+  if (edge >= 3 && ev >= 4) return 'B PLAY';
+  return 'NO PLAY';
+}
 
-  if (!key) {
-    throw new Error('Missing ODDS_API_KEY');
+function getStakeUnits(playRating: string): number {
+  switch (playRating) {
+    case 'MAX PLAY':
+      return 3;
+    case 'A PLAY':
+      return 2;
+    case 'B PLAY':
+      return 1;
+    default:
+      return 0;
   }
+}
 
-  const url =
-    `https://api.the-odds-api.com/v4/sports/${sport}/odds` +
-    `?apiKey=${key}` +
-    `&regions=us` +
-    `&markets=h2h` +
-    `&oddsFormat=american` +
-    `&dateFormat=iso` +
-    `&bookmakers=${getSharpBookmakerKeys().join(',')}`;
+async function fetchOddsForSport(
+  sport: string,
+  apiKey: string,
+  bookmakers: string[]
+): Promise<OddsEvent[]> {
+  const url = new URL(`https://api.the-odds-api.com/v4/sports/${sport}/odds`);
 
-  const res = await fetch(url, { cache: 'no-store' });
+  url.searchParams.set('apiKey', apiKey);
+  url.searchParams.set('regions', 'us');
+  url.searchParams.set('markets', 'h2h');
+  url.searchParams.set('oddsFormat', 'american');
+  url.searchParams.set('bookmakers', bookmakers.join(','));
+
+  const res = await fetch(url.toString(), {
+    method: 'GET',
+    cache: 'no-store',
+  });
 
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Odds API failed for ${sport}: ${text}`);
   }
 
-  const data = (await res.json()) as OddsApiEvent[];
+  const data = (await res.json()) as OddsEvent[];
   return Array.isArray(data) ? data : [];
 }
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = req.headers.get('authorization');
-    const secret = process.env.CRON_SECRET;
+    const cronSecret = process.env.CRON_SECRET;
+    const authHeader = req.headers.get('authorization');
+    const bearer = authHeader?.replace('Bearer ', '');
 
-    if (secret && auth !== `Bearer ${secret}`) {
+    if (cronSecret && bearer !== cronSecret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const supabase = getSupabase();
+    const apiKey = getOddsApiKey();
+    const allowedBookmakers = getAllowedBookmakers();
 
-    const sports = [
+    const sportsToCheck = [
       'baseball_mlb',
       'basketball_nba',
       'icehockey_nhl',
       'americanfootball_nfl',
     ];
 
-    const events: OddsApiEvent[] = [];
+    const allEvents: OddsEvent[] = [];
 
-    for (const sport of sports) {
-      const sportEvents = await fetchOdds(sport);
-      events.push(...sportEvents);
+    for (const sport of sportsToCheck) {
+      try {
+        const events = await fetchOddsForSport(sport, apiKey, allowedBookmakers);
+        allEvents.push(...events);
+      } catch (sportError) {
+        console.error(`Failed loading ${sport}:`, sportError);
+      }
     }
 
-    const filteredEvents = events.filter(
-      (event) => event.commence_time && isValidGame(event.commence_time)
+    const filteredEvents = allEvents.filter((event) =>
+      isWithinCurrentOrNextDay(event.commence_time)
     );
 
     const picks: PickInsert[] = [];
 
     for (const event of filteredEvents) {
-      if (!event.bookmakers || event.bookmakers.length < 2) continue;
+      const sides = buildSidesFromBookmakers(event.bookmakers);
 
-      const sides: Record<string, SidePriceData> = {};
+      for (const [team, data] of Object.entries(sides)) {
+        if (!Array.isArray(data.prices) || data.prices.length < 2) continue;
 
-      for (const bookmaker of event.bookmakers) {
-        const market = bookmaker.markets.find((m) => m.key === 'h2h');
-        if (!market) continue;
+        const bestPrice = data.bestPrice;
+        const bestBook = data.bestBook;
 
-        for (const outcome of market.outcomes) {
-          if (!sides[outcome.name]) {
-            sides[outcome.name] = {
-              prices: [],
-              best: outcome.price,
-              book: bookmaker.title,
-            };
-          }
-
-          sides[outcome.name].prices.push(outcome.price);
-
-          if (outcome.price > sides[outcome.name].best) {
-            sides[outcome.name].best = outcome.price;
-            sides[outcome.name].book = bookmaker.title;
-          }
+        // Optional pricing cleanup:
+        // skip weak mid-range prices to avoid lots of junk plays
+        if (bestPrice > -150 && bestPrice < 120) {
+          continue;
         }
-      }
 
-      for (const [team, side] of Object.entries(sides)) {
-        if (side.prices.length < 2) continue;
+        const fair = getConsensusFairOdds(team, sides);
+        if (!fair) continue;
 
-        const consensus =
-          side.prices
-            .map((price) => americanToImpliedProbability(price))
-            .reduce((sum, probability) => sum + probability, 0) /
-          side.prices.length;
+        const modelProb = fair.fairProbability;
+        const marketProb = americanToImpliedProbability(bestPrice);
 
-        const bestProb = americanToImpliedProbability(side.best);
-        const model = estimateModelProbability(consensus, bestProb);
-        const edge = model - bestProb;
-        const ev = expectedValue(model, side.best);
+        const edge = (modelProb - marketProb) * 100;
+        const ev =
+          (modelProb * (americanToDecimal(bestPrice) - 1) - (1 - modelProb)) * 100;
 
-        if (model < 0.1) continue;
-        if (edge < 0.01) continue;
-        if (ev < 0.03) continue;
-        if (side.best > 350) continue;
-        if (side.best < -200) continue;
+        const playRating = getPlayRating(edge, ev);
+        if (playRating === 'NO PLAY') continue;
 
-        const rating = getRating(model, edge, ev, side.best);
-        if (rating === 'PASS') continue;
+        const stake = getStakeUnits(playRating);
+        if (stake <= 0) continue;
+
+        const sport = getSportLabel(event.sport_key, event.sport_title);
+        const game = `${event.away_team} at ${event.home_team}`;
+        const pick = `${team} ML`;
+        const confidence = Math.round(modelProb * 100);
+
+        const analysis = [
+          `${team} moneyline shows value versus the consensus market.`,
+          `Best price found: ${bestPrice > 0 ? `+${bestPrice}` : bestPrice} at ${bestBook}.`,
+          `Model win probability: ${(modelProb * 100).toFixed(2)}%.`,
+          `Market implied probability: ${(marketProb * 100).toFixed(2)}%.`,
+          `Estimated edge: ${edge.toFixed(2)}%.`,
+          `Estimated EV: ${ev.toFixed(2)}%.`,
+          `Play rating: ${playRating}.`,
+        ].join(' ');
 
         picks.push({
-          sport: normalizeSportLabel(event.sport_title),
-          game: `${event.away_team} at ${event.home_team}`,
-          pick: `${team} ML`,
-          odds: side.best,
-          confidence: Math.round(model * 100),
-          stake: 10,
+          sport,
+          game,
+          pick,
+          odds: bestPrice,
+          confidence,
+          stake,
           result: 'pending',
-          sportsbook: side.book,
-          edge: Number((edge * 100).toFixed(2)),
-          ev: Number((ev * 100).toFixed(2)),
-          analysis:
-            `${team} moneyline shows value versus the consensus market. ` +
-            `Best price found: ${formatOdds(side.best)} at ${side.book}. ` +
-            `Model win probability: ${(model * 100).toFixed(2)}%. ` +
-            `Market implied probability: ${(bestProb * 100).toFixed(2)}%. ` +
-            `Estimated edge: ${(edge * 100).toFixed(2)}%. ` +
-            `Estimated EV: ${(ev * 100).toFixed(2)}%. ` +
-            `Play rating: ${rating}.`,
+          analysis,
+          sportsbook: bestBook,
+          edge: Number(edge.toFixed(2)),
+          ev: Number(ev.toFixed(2)),
           game_time: event.commence_time,
-          play_rating: rating,
+          play_rating: playRating,
         });
       }
     }
 
-    picks.sort((a, b) => b.ev - a.ev);
+    // highest-quality picks first
+    picks.sort((a, b) => {
+      if (b.ev !== a.ev) return b.ev - a.ev;
+      if (b.edge !== a.edge) return b.edge - a.edge;
+      return b.confidence - a.confidence;
+    });
 
-    const finalPicks = picks.slice(0, 5);
+    // avoid duplicate picks for same game + side
+    const deduped = picks.filter((pick, index, arr) => {
+      return (
+        arr.findIndex(
+          (p) => p.game === pick.game && p.pick === pick.pick && p.odds === pick.odds
+        ) === index
+      );
+    });
 
-    const { start, end } = getWindow();
+    // cap the board so your page stays sharp
+    const finalPicks = deduped.slice(0, 10);
+
+    // clear only pending picks for today/tomorrow so you can regenerate cleanly
+    const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const endOfTomorrow = new Date(startOfToday);
+    endOfTomorrow.setDate(endOfTomorrow.getDate() + 2);
+    endOfTomorrow.setMilliseconds(-1);
 
     const { error: deleteError } = await supabase
       .from('picks')
       .delete()
-      .gte('created_at', start.toISOString())
-      .lte('created_at', end.toISOString());
+      .eq('result', 'pending')
+      .gte('game_time', startOfToday.toISOString())
+      .lte('game_time', endOfTomorrow.toISOString());
 
     if (deleteError) {
-      throw new Error(`Failed clearing old picks: ${deleteError.message}`);
+      throw new Error(`Supabase delete failed: ${deleteError.message}`);
     }
 
     if (finalPicks.length === 0) {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No qualifying sharp picks found for today or tomorrow.',
+        message: 'No qualifying sharp picks found today.',
         debug: {
           eventsChecked: filteredEvents.length,
-          candidatesFound: picks.length,
+          candidatesFound: 0,
         },
       });
     }
 
-    const { data, error } = await supabase
+    const { data: insertedRows, error: insertError } = await supabase
       .from('picks')
       .insert(finalPicks)
       .select();
 
-    if (error) {
-      throw new Error(`Supabase insert failed: ${error.message}`);
+    if (insertError) {
+      throw new Error(`Supabase insert failed: ${insertError.message}`);
     }
 
     return NextResponse.json({
       success: true,
-      inserted: data?.length || 0,
-      picks: data || [],
+      inserted: insertedRows?.length || 0,
+      picks: insertedRows || [],
+      debug: {
+        eventsChecked: filteredEvents.length,
+        candidatesFound: picks.length,
+        finalPicks: finalPicks.length,
+      },
     });
   } catch (error) {
+    console.error('Generate picks error:', error);
+
     return NextResponse.json(
       {
         success: false,
