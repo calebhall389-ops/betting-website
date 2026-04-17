@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { getSupabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,10 +24,7 @@ function isAuthorized(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
   const cronHeader = req.headers.get('x-cron-secret');
 
-  return (
-    authHeader === `Bearer ${cronSecret}` ||
-    cronHeader === cronSecret
-  );
+  return authHeader === `Bearer ${cronSecret}` || cronHeader === cronSecret;
 }
 
 function buildMockLiveCandidates(): LiveCandidate[] {
@@ -71,10 +68,6 @@ export async function POST(req: NextRequest) {
 
     const supabase = getSupabaseAdmin();
 
-    /**
-     * Replace this section with your real live model logic.
-     * For now this route shows the exact insert structure you need.
-     */
     const candidates = buildMockLiveCandidates();
 
     if (!candidates.length) {
