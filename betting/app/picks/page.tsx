@@ -9,17 +9,14 @@ type PickRow = {
   game: string;
   pick: string;
   odds: number;
-  confidence: string | number | null;
-  stake: number | null;
-  result: string | null;
+  confidence: number | string;
+  stake: number;
+  result: string;
+  analysis?: string | null;
   sportsbook?: string | null;
   edge?: number | null;
   ev?: number | null;
-  analysis?: string | null;
   game_time?: string | null;
-  commence_time?: string | null;
-  market_probability?: number | null;
-  model_probability?: number | null;
   play_rating?: string | null;
 };
 
@@ -27,8 +24,7 @@ function getSupabase() {
   const url =
     process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   const anon =
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
   if (!url || !anon) {
     throw new Error(
@@ -40,206 +36,220 @@ function getSupabase() {
 }
 
 function formatOdds(odds: number | null | undefined) {
-  if (odds === null || odds === undefined || Number.isNaN(Number(odds))) {
-    return '—';
-  }
-
-  const value = Number(odds);
-  return value > 0 ? `+${value}` : `${value}`;
+  if (typeof odds !== 'number' || !Number.isFinite(odds)) return 'N/A';
+  return odds > 0 ? `+${odds}` : `${odds}`;
 }
 
-function formatPercent(
-  value: number | string | null | undefined,
-  digits = 2,
-  addPercentSign = true
-) {
-  if (value === null || value === undefined || value === '') return '—';
-
-  const num = Number(value);
-  if (!Number.isFinite(num)) return '—';
-
-  const fixed =
-    digits === 0 ? `${Math.round(num)}` : num.toFixed(digits);
-
-  return addPercentSign ? `${fixed}%` : fixed;
+function formatPercent(value: number | null | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'N/A';
+  return `${value.toFixed(2)}%`;
 }
 
-function formatConfidence(value: number | string | null | undefined) {
-  if (value === null || value === undefined || value === '') return '—';
-
-  const num = Number(value);
-  if (!Number.isFinite(num)) return '—';
-
-  return `${Math.round(num)}%`;
-}
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return '—';
+function formatGameTime(value: string | null | undefined) {
+  if (!value) return 'TBD';
 
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return 'TBD';
 
-  return new Intl.DateTimeFormat('en-US', {
+  return date.toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  }).format(date);
+  });
 }
 
-function normalizeResult(result: string | null | undefined) {
-  if (!result) return 'pending';
-  return result;
-}
+function getResultClass(result: string | null | undefined) {
+  const normalized = (result || '').toLowerCase();
 
-function getRatingClasses(rating: string | null | undefined) {
-  const value = (rating || '').toUpperCase();
-
-  if (value === 'MAX PLAY') {
-    return 'text-emerald-400';
-  }
-
-  if (value === 'A PLAY') {
-    return 'text-cyan-400';
-  }
-
-  if (value === 'B PLAY') {
-    return 'text-yellow-300';
-  }
-
+  if (normalized === 'win') return 'text-emerald-400';
+  if (normalized === 'loss') return 'text-red-400';
+  if (normalized === 'push') return 'text-yellow-400';
   return 'text-white';
 }
 
-export default async function PicksPage() {
+function getPlayRatingClass(playRating: string | null | undefined) {
+  switch ((playRating || '').toUpperCase()) {
+    case 'MAX PLAY':
+      return 'text-red-400';
+    case 'A PLAY':
+      return 'text-cyan-400';
+    case 'B PLAY':
+      return 'text-yellow-400';
+    default:
+      return 'text-white';
+  }
+}
+
+function getConfidenceLabel(pick: PickRow) {
+  const confidence =
+    typeof pick.confidence === 'number'
+      ? pick.confidence
+      : Number(pick.confidence);
+
+  if (!Number.isFinite(confidence)) return 'N/A';
+
+  if (typeof pick.odds === 'number' && pick.odds >= 300) {
+    return `Win Prob: ${confidence}%`;
+  }
+
+  if (confidence < 50) {
+    return 'Value Edge Detected';
+  }
+
+  return `${confidence}%`;
+}
+
+function getConfidenceTitle(pick: PickRow) {
+  if (typeof pick.odds === 'number' && pick.odds >= 300) {
+    return 'Win Probability';
+  }
+
+  const confidence =
+    typeof pick.confidence === 'number'
+      ? pick.confidence
+      : Number(pick.confidence);
+
+  if (Number.isFinite(confidence) && confidence < 50) {
+    return 'Signal';
+  }
+
+  return 'Confidence';
+}
+
+async function getPicks(): Promise<PickRow[]> {
   const supabase = getSupabase();
+
+  const now = new Date();
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+
+  const endOfTomorrow = new Date(startOfToday);
+  endOfTomorrow.setDate(endOfTomorrow.getDate() + 2);
+  endOfTomorrow.setMilliseconds(-1);
 
   const { data, error } = await supabase
     .from('picks')
-    .select('*')
-    .order('game_time', { ascending: true, nullsFirst: false })
-    .order('created_at', { ascending: false });
+    .select(
+      `
+      id,
+      created_at,
+      sport,
+      game,
+      pick,
+      odds,
+      confidence,
+      stake,
+      result,
+      analysis,
+      sportsbook,
+      edge,
+      ev,
+      game_time,
+      play_rating
+    `
+    )
+    .gte('game_time', startOfToday.toISOString())
+    .lte('game_time', endOfTomorrow.toISOString())
+    .order('ev', { ascending: false })
+    .order('edge', { ascending: false })
+    .order('game_time', { ascending: true });
 
   if (error) {
-    return (
-      <main className="min-h-screen bg-black px-6 py-10 text-white">
-        <div className="mx-auto max-w-6xl">
-          <h1 className="text-4xl font-bold">Today&apos;s Picks</h1>
-          <p className="mt-4 text-red-400">
-            Failed to load picks: {error.message}
-          </p>
-        </div>
-      </main>
-    );
+    console.error('Supabase picks fetch error:', error);
+    return [];
   }
 
-  const picks = ((data as PickRow[] | null) || []).filter(Boolean);
+  return (data as PickRow[]) || [];
+}
+
+export default async function PicksPage() {
+  const picks = await getPicks();
 
   return (
-    <main className="min-h-screen bg-black px-6 py-10 text-white">
-      <div className="mx-auto max-w-6xl">
-        <h1 className="text-4xl font-bold">Today&apos;s Picks</h1>
-        <p className="mt-3 text-lg text-white/70">
-          Sharp moneyline picks generated from market price comparisons.
-        </p>
+    <main className="min-h-screen bg-black text-white">
+      <div className="mx-auto max-w-7xl px-6 py-10">
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold tracking-tight">Today&apos;s Picks</h1>
+          <p className="mt-2 text-gray-400">
+            Best available model-driven moneyline plays for today and tomorrow.
+          </p>
+        </div>
 
         {picks.length === 0 ? (
-          <div className="mt-10 rounded-3xl border border-white/10 bg-white/5 p-8">
-            <p className="text-lg text-white/80">
-              No picks available right now.
+          <div className="rounded-[2rem] border border-white/10 bg-gradient-to-b from-white/[0.03] to-white/[0.01] p-10 text-center shadow-2xl">
+            <h2 className="text-2xl font-semibold">No sharp picks found</h2>
+            <p className="mt-3 text-gray-400">
+              No qualifying plays are available right now. Try regenerating picks or
+              check back closer to game time.
             </p>
           </div>
         ) : (
-          <div className="mt-10 space-y-10">
+          <div className="space-y-10">
             {picks.map((pick) => (
               <section
                 key={pick.id}
-                className="rounded-[32px] border border-white/10 bg-gradient-to-r from-white/[0.04] via-white/[0.02] to-white/[0.04] p-7 shadow-2xl"
+                className="overflow-hidden rounded-[2.25rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(20,40,80,0.15),transparent_35%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.015))] p-8 shadow-[0_0_0_1px_rgba(255,255,255,0.03),0_30px_80px_rgba(0,0,0,0.45)]"
               >
-                <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                <div className="mb-8 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <p className="text-sm uppercase tracking-[0.2em] text-white/45">
-                      {pick.sport || 'Pick'}
-                    </p>
-                    <h2 className="mt-2 text-3xl font-bold tracking-tight">
+                    <div className="mb-3 text-sm uppercase tracking-[0.35em] text-gray-300">
+                      {pick.sport || 'SPORT'}
+                    </div>
+                    <h2 className="text-3xl font-bold tracking-tight md:text-4xl">
                       {pick.pick}
                     </h2>
-                    <p className="mt-2 text-2xl text-white/75">{pick.game}</p>
+                    <p className="mt-2 text-2xl text-gray-300">{pick.game}</p>
                   </div>
 
-                  <div className="text-left lg:text-right">
-                    <p className="text-sm text-white/50">Odds</p>
-                    <p className="text-6xl font-bold tracking-tight">
+                  <div className="shrink-0 text-left lg:text-right">
+                    <div className="text-sm text-gray-400">Odds</div>
+                    <div className="text-6xl font-bold tracking-tight md:text-7xl">
                       {formatOdds(pick.odds)}
-                    </p>
+                    </div>
                   </div>
                 </div>
 
-                <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <div className="rounded-3xl bg-white/[0.04] p-5">
-                    <p className="text-sm text-white/55">Confidence</p>
-                    <p className="mt-2 text-2xl font-semibold">
-                      {formatConfidence(pick.confidence)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl bg-white/[0.04] p-5">
-                    <p className="text-sm text-white/55">Stake</p>
-                    <p className="mt-2 text-2xl font-semibold">
-                      {pick.stake ?? '—'}
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl bg-white/[0.04] p-5">
-                    <p className="text-sm text-white/55">Result</p>
-                    <p className="mt-2 text-2xl font-semibold">
-                      {normalizeResult(pick.result)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl bg-white/[0.04] p-5">
-                    <p className="text-sm text-white/55">Game Time</p>
-                    <p className="mt-2 text-2xl font-semibold">
-                      {formatDateTime(pick.game_time || pick.commence_time)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl bg-white/[0.04] p-5">
-                    <p className="text-sm text-white/55">Sportsbook</p>
-                    <p className="mt-2 text-2xl font-semibold">
-                      {pick.sportsbook || '—'}
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl bg-white/[0.04] p-5">
-                    <p className="text-sm text-white/55">Edge</p>
-                    <p className="mt-2 text-2xl font-semibold text-emerald-400">
-                      {formatPercent(pick.edge)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl bg-white/[0.04] p-5">
-                    <p className="text-sm text-white/55">EV</p>
-                    <p className="mt-2 text-2xl font-semibold text-emerald-400">
-                      {formatPercent(pick.ev)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl bg-white/[0.04] p-5">
-                    <p className="text-sm text-white/55">Play Rating</p>
-                    <p
-                      className={`mt-2 text-2xl font-semibold ${getRatingClasses(
-                        pick.play_rating
-                      )}`}
-                    >
-                      {pick.play_rating || '—'}
-                    </p>
-                  </div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <StatCard
+                    label={getConfidenceTitle(pick)}
+                    value={getConfidenceLabel(pick)}
+                  />
+                  <StatCard label="Stake" value={`${pick.stake ?? 0}`} />
+                  <StatCard
+                    label="Result"
+                    value={pick.result || 'pending'}
+                    valueClassName={getResultClass(pick.result)}
+                  />
+                  <StatCard
+                    label="Game Time"
+                    value={formatGameTime(pick.game_time)}
+                  />
+                  <StatCard
+                    label="Sportsbook"
+                    value={pick.sportsbook || 'N/A'}
+                  />
+                  <StatCard
+                    label="Edge"
+                    value={formatPercent(pick.edge)}
+                    valueClassName="text-emerald-400"
+                  />
+                  <StatCard
+                    label="EV"
+                    value={formatPercent(pick.ev)}
+                    valueClassName="text-emerald-400"
+                  />
+                  <StatCard
+                    label="Play Rating"
+                    value={pick.play_rating || 'N/A'}
+                    valueClassName={getPlayRatingClass(pick.play_rating)}
+                  />
                 </div>
 
-                <div className="mt-5 rounded-3xl bg-white/[0.04] p-5">
-                  <p className="text-sm text-white/55">Analysis</p>
-                  <p className="mt-3 text-xl leading-10 text-white/92">
+                <div className="mt-6 rounded-[1.75rem] border border-white/5 bg-white/[0.02] p-6">
+                  <div className="mb-4 text-sm text-gray-300">Analysis</div>
+                  <p className="text-xl leading-10 text-gray-100">
                     {pick.analysis || 'No analysis available.'}
                   </p>
                 </div>
@@ -249,5 +259,24 @@ export default async function PicksPage() {
         )}
       </div>
     </main>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  valueClassName = 'text-white',
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="rounded-[1.75rem] border border-white/5 bg-white/[0.03] p-6 shadow-inner shadow-black/20">
+      <div className="mb-3 text-sm text-gray-300">{label}</div>
+      <div className={`text-2xl font-semibold leading-snug ${valueClassName}`}>
+        {value}
+      </div>
+    </div>
   );
 }
