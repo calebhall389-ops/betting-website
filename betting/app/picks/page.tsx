@@ -31,7 +31,7 @@ function getSupabase() {
 
   if (!url || !anon) {
     throw new Error(
-      'Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY/SUPABASE_ANON_KEY'
+      'Missing Supabase environment variables'
     );
   }
 
@@ -44,6 +44,14 @@ function getDateKeyInTimeZone(date: Date, timeZone: string) {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+  }).format(date);
+}
+
+function formatTime(date: Date, timeZone: string) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
   }).format(date);
 }
 
@@ -79,6 +87,7 @@ export default async function PicksPage() {
   const picks = (data ?? []) as PickRow[];
 
   const now = new Date();
+
   const todayKey = getDateKeyInTimeZone(now, DISPLAY_TIMEZONE);
 
   const tomorrow = new Date(now);
@@ -87,24 +96,43 @@ export default async function PicksPage() {
 
   const todaysPicks = picks.filter((pick) => {
     if (!pick.game_date) return false;
-    return getDateKeyInTimeZone(new Date(pick.game_date), DISPLAY_TIMEZONE) === todayKey;
+    return (
+      getDateKeyInTimeZone(new Date(pick.game_date), DISPLAY_TIMEZONE) ===
+      todayKey
+    );
   });
 
   const tomorrowsPicks = picks.filter((pick) => {
     if (!pick.game_date) return false;
-    return getDateKeyInTimeZone(new Date(pick.game_date), DISPLAY_TIMEZONE) === tomorrowKey;
+    return (
+      getDateKeyInTimeZone(new Date(pick.game_date), DISPLAY_TIMEZONE) ===
+      tomorrowKey
+    );
   });
 
   return (
     <main className="min-h-screen bg-[#020817] text-white">
       <div className="mx-auto max-w-6xl px-6 py-12">
+
+        {/* HEADER */}
         <div className="mb-12">
           <h1 className="text-5xl font-bold tracking-tight">Sharp Picks</h1>
+
           <p className="mt-3 text-lg text-gray-400">
             Official model-generated moneyline plays for today and tomorrow.
           </p>
+
+          <p className="mt-2 text-sm text-gray-500">
+            Picks update as market odds move and may appear or disappear throughout the day.
+          </p>
+
+          {/* 🔥 LAST UPDATED */}
+          <p className="mt-2 text-sm text-gray-500">
+            Last updated: {formatTime(now, DISPLAY_TIMEZONE)} (Arizona time)
+          </p>
         </div>
 
+        {/* TODAY */}
         <section className="mb-14">
           <h2 className="mb-5 text-3xl font-semibold">Today&apos;s Picks</h2>
 
@@ -120,11 +148,11 @@ export default async function PicksPage() {
                   className="rounded-3xl border border-white/10 bg-[#061028] p-6"
                 >
                   <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1">
+                    <div className="flex-1">
                       <h3 className="text-2xl font-semibold">{pick.pick}</h3>
                       <p className="mt-1 text-gray-400">{pick.game}</p>
 
-                      <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-300">
+                      <div className="mt-4 flex flex-wrap gap-4 text-sm text-gray-300">
                         <span>{pick.sport}</span>
                         <span>{pick.sportsbook ?? '—'}</span>
                         <span>{formatOdds(pick.odds)}</span>
@@ -133,14 +161,12 @@ export default async function PicksPage() {
                         <span>Confidence: {formatConfidence(pick.confidence)}</span>
                       </div>
 
-                      {pick.analysis ? (
-                        <p className="mt-4 text-base leading-7 text-gray-300">
-                          {pick.analysis}
-                        </p>
-                      ) : null}
+                      {pick.analysis && (
+                        <p className="mt-4 text-gray-300">{pick.analysis}</p>
+                      )}
                     </div>
 
-                    <div className="shrink-0 rounded-full border border-white/15 px-4 py-2 text-sm text-white/90">
+                    <div className="rounded-full border border-white/15 px-4 py-2 text-sm">
                       {pick.play_rating ?? 'PLAY'}
                     </div>
                   </div>
@@ -150,12 +176,13 @@ export default async function PicksPage() {
           )}
         </section>
 
+        {/* TOMORROW */}
         <section>
           <h2 className="mb-5 text-3xl font-semibold">Tomorrow&apos;s Picks</h2>
 
           {tomorrowsPicks.length === 0 ? (
             <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-gray-400">
-              Tomorrow&apos;s lines are still developing. Check back later tonight or in the morning.
+              Tomorrow&apos;s lines are still developing. Check back later.
             </div>
           ) : (
             <div className="space-y-5">
@@ -165,11 +192,11 @@ export default async function PicksPage() {
                   className="rounded-3xl border border-white/10 bg-[#061028] p-6"
                 >
                   <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1">
+                    <div className="flex-1">
                       <h3 className="text-2xl font-semibold">{pick.pick}</h3>
                       <p className="mt-1 text-gray-400">{pick.game}</p>
 
-                      <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-300">
+                      <div className="mt-4 flex flex-wrap gap-4 text-sm text-gray-300">
                         <span>{pick.sport}</span>
                         <span>{pick.sportsbook ?? '—'}</span>
                         <span>{formatOdds(pick.odds)}</span>
@@ -178,14 +205,12 @@ export default async function PicksPage() {
                         <span>Confidence: {formatConfidence(pick.confidence)}</span>
                       </div>
 
-                      {pick.analysis ? (
-                        <p className="mt-4 text-base leading-7 text-gray-300">
-                          {pick.analysis}
-                        </p>
-                      ) : null}
+                      {pick.analysis && (
+                        <p className="mt-4 text-gray-300">{pick.analysis}</p>
+                      )}
                     </div>
 
-                    <div className="shrink-0 rounded-full border border-white/15 px-4 py-2 text-sm text-white/90">
+                    <div className="rounded-full border border-white/15 px-4 py-2 text-sm">
                       {pick.play_rating ?? 'PLAY'}
                     </div>
                   </div>
@@ -194,6 +219,7 @@ export default async function PicksPage() {
             </div>
           )}
         </section>
+
       </div>
     </main>
   );
