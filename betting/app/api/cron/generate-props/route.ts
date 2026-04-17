@@ -59,6 +59,12 @@ const PROP_SPORT_KEYS = [
 
 const MAJOR_BOOKS_SET = new Set(MAJOR_BOOKMAKERS);
 
+// loosened thresholds so props can start populating
+const MIN_BOOKS = 2;
+const MIN_EDGE = 1.75;
+const MIN_EV = 1.25;
+const MAX_PROPS_PER_RUN = 18;
+
 function getSupabase() {
   const url =
     process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -109,8 +115,8 @@ function calcEvPercent(modelProb: number, americanOdds: number) {
 function getConfidence(edge: number, ev: number) {
   if (edge >= 5 && ev >= 4) return 5;
   if (edge >= 4 && ev >= 3.25) return 4;
-  if (edge >= 3 && ev >= 2.5) return 3;
-  if (edge >= 2.5 && ev >= 2) return 2;
+  if (edge >= 2.75 && ev >= 2) return 3;
+  if (edge >= 1.75 && ev >= 1.25) return 2;
   return 1;
 }
 
@@ -189,7 +195,7 @@ function chooseBestSide(args: {
 
   const candidates: CandidateScore[] = [];
 
-  if (overEdge >= 2.5 && overEv >= 2) {
+  if (overEdge >= MIN_EDGE && overEv >= MIN_EV) {
     candidates.push({
       recommendation: 'over',
       bestOdds: bestOver.price,
@@ -201,7 +207,7 @@ function chooseBestSide(args: {
     });
   }
 
-  if (underEdge >= 2.5 && underEv >= 2) {
+  if (underEdge >= MIN_EDGE && underEv >= MIN_EV) {
     candidates.push({
       recommendation: 'under',
       bestOdds: bestUnder.price,
@@ -243,6 +249,7 @@ async function handleGenerate(req: NextRequest) {
 
     for (const sportKey of PROP_SPORT_KEYS) {
       const events = await fetchOddsForSport(sportKey);
+
       for (const event of events) {
         const eventYmd = getArizonaYmd(new Date(event.commence_time));
         if (allowedDates.has(eventYmd)) {
@@ -267,7 +274,11 @@ async function handleGenerate(req: NextRequest) {
 
       let eventWithProps: OddsEvent;
       try {
-        eventWithProps = await fetchPlayerPropsForEvent(sportKey, event.id, markets);
+        eventWithProps = await fetchPlayerPropsForEvent(
+          sportKey,
+          event.id,
+          markets
+        );
       } catch {
         continue;
       }
@@ -320,7 +331,7 @@ async function handleGenerate(req: NextRequest) {
             typeof b.overPrice === 'number' && typeof b.underPrice === 'number'
         );
 
-        if (validBooks.length < 2) continue;
+        if (validBooks.length < MIN_BOOKS) continue;
 
         propPairsChecked += 1;
 
@@ -334,29 +345,33 @@ async function handleGenerate(req: NextRequest) {
         const consensus = normalizeConsensusProb(overProbs, underProbs);
         if (!consensus) continue;
 
-        const bestOver = validBooks.reduce((best, current) =>
-          (current.overPrice as number) > best.price
-            ? {
-                price: current.overPrice as number,
-                bookTitle: current.bookTitle,
-              }
-            : best,
-        {
-          price: validBooks[0].overPrice as number,
-          bookTitle: validBooks[0].bookTitle,
-        });
+        const bestOver = validBooks.reduce(
+          (best, current) =>
+            (current.overPrice as number) > best.price
+              ? {
+                  price: current.overPrice as number,
+                  bookTitle: current.bookTitle,
+                }
+              : best,
+          {
+            price: validBooks[0].overPrice as number,
+            bookTitle: validBooks[0].bookTitle,
+          }
+        );
 
-        const bestUnder = validBooks.reduce((best, current) =>
-          (current.underPrice as number) > best.price
-            ? {
-                price: current.underPrice as number,
-                bookTitle: current.bookTitle,
-              }
-            : best,
-        {
-          price: validBooks[0].underPrice as number,
-          bookTitle: validBooks[0].bookTitle,
-        });
+        const bestUnder = validBooks.reduce(
+          (best, current) =>
+            (current.underPrice as number) > best.price
+              ? {
+                  price: current.underPrice as number,
+                  bookTitle: current.bookTitle,
+                }
+              : best,
+          {
+            price: validBooks[0].underPrice as number,
+            bookTitle: validBooks[0].bookTitle,
+          }
+        );
 
         const chosen = chooseBestSide({
           overConsensus: consensus.over,
@@ -426,7 +441,7 @@ async function handleGenerate(req: NextRequest) {
         if (b.confidence !== a.confidence) return b.confidence - a.confidence;
         return a.player.localeCompare(b.player);
       })
-      .slice(0, 18);
+      .slice(0, MAX_PROPS_PER_RUN);
 
     if (finalProps.length === 0) {
       return NextResponse.json({
@@ -438,10 +453,10 @@ async function handleGenerate(req: NextRequest) {
           propPairsChecked,
           candidatesFound,
           finalSelected: 0,
-          minBooks: 2,
-          minEdge: 2.5,
-          minEv: 2,
-          maxPropsPerRun: 18,
+          minBooks: MIN_BOOKS,
+          minEdge: MIN_EDGE,
+          minEv: MIN_EV,
+          maxPropsPerRun: MAX_PROPS_PER_RUN,
         },
       });
     }
@@ -464,10 +479,10 @@ async function handleGenerate(req: NextRequest) {
         propPairsChecked,
         candidatesFound,
         finalSelected: finalProps.length,
-        minBooks: 2,
-        minEdge: 2.5,
-        minEv: 2,
-        maxPropsPerRun: 18,
+        minBooks: MIN_BOOKS,
+        minEdge: MIN_EDGE,
+        minEv: MIN_EV,
+        maxPropsPerRun: MAX_PROPS_PER_RUN,
       },
     });
   } catch (error) {
