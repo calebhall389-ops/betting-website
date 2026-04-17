@@ -131,8 +131,8 @@ function calcEvPercent(modelProb: number, americanOdds: number) {
 }
 
 function getPlayRating(edge: number, ev: number) {
-  if (edge >= 6 && ev >= 5) return 'MAX PLAY';
-  if (edge >= 4.5 && ev >= 4) return 'A PLAY';
+  if (edge >= 5 && ev >= 4) return 'MAX PLAY';
+  if (edge >= 3.75 && ev >= 3.5) return 'A PLAY';
   return 'B PLAY';
 }
 
