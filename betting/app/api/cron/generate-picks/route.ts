@@ -107,14 +107,18 @@ function normalizeSportName(sportTitle: string): string {
   return sportTitle;
 }
 
-function getPlayRating(evPct: number, edgePct: number, modelProb: number): string {
+function getPlayRating(
+  evPct: number,
+  edgePct: number,
+  modelProb: number
+): string {
   if (evPct >= 14 && edgePct >= 6 && modelProb >= 0.6) {
     return 'MAX PLAY';
   }
-  if (evPct >= 12 && edgePct >= 5.5 && modelProb >= 0.56) {
+  if (evPct >= 11.5 && edgePct >= 5 && modelProb >= 0.55) {
     return 'A+ PLAY';
   }
-  if (evPct >= 10 && edgePct >= 4.5 && modelProb >= 0.52) {
+  if (evPct >= 9 && edgePct >= 4.25 && modelProb >= 0.5) {
     return 'A PLAY';
   }
   return 'B+ PLAY';
@@ -196,10 +200,10 @@ export async function GET(req: NextRequest) {
       'pointsbetus',
     ];
 
-    const MIN_BOOKS = 3;
-    const MIN_EDGE = 4.5;
-    const MIN_EV = 10;
-    const MIN_CONFIDENCE = 50;
+    const MIN_BOOKS = 2;
+    const MIN_EDGE = 4.0;
+    const MIN_EV = 8.5;
+    const MIN_CONFIDENCE = 48;
     const MAX_PICKS_PER_RUN = 5;
 
     const now = new Date();
@@ -263,8 +267,7 @@ export async function GET(req: NextRequest) {
             .map((price) => americanToImpliedProb(price))
             .reduce((sum, prob) => sum + prob, 0) / data.prices.length;
 
-        // Elite version: lighter model boost so the edge is less inflated
-        const modelProb = Math.min(consensusProb * 1.05, 0.92);
+        const modelProb = Math.min(consensusProb * 1.06, 0.92);
 
         if (modelProb <= 0 || modelProb >= 0.95) continue;
 
@@ -314,8 +317,17 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // Only keep the single best side from each game
       eventCandidates.sort((a, b) => {
+        const ratingRank = (rating: string) => {
+          if (rating === 'MAX PLAY') return 4;
+          if (rating === 'A+ PLAY') return 3;
+          if (rating === 'A PLAY') return 2;
+          return 1;
+        };
+
+        const ratingDiff = ratingRank(b.play_rating) - ratingRank(a.play_rating);
+        if (ratingDiff !== 0) return ratingDiff;
+
         if (b.ev !== a.ev) return b.ev - a.ev;
         if (b.edge !== a.edge) return b.edge - a.edge;
         return Number(b.confidence) - Number(a.confidence);
@@ -348,7 +360,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No qualifying elite picks found today or tomorrow.',
+        message: 'No qualifying balanced picks found today or tomorrow.',
         debug: {
           eventsChecked,
           candidatesFound: candidates.length,
@@ -370,12 +382,16 @@ export async function GET(req: NextRequest) {
     dayAfterTomorrow.setUTCDate(dayAfterTomorrow.getUTCDate() + 1);
     dayAfterTomorrow.setUTCHours(0, 0, 0, 0);
 
-    await supabase
+    const { error: deleteError } = await supabase
       .from('picks')
       .delete()
       .gte('game_date', todayStart.toISOString())
       .lt('game_date', dayAfterTomorrow.toISOString())
       .eq('status', 'pending');
+
+    if (deleteError) {
+      throw new Error(`Supabase delete failed: ${deleteError.message}`);
+    }
 
     const { data: insertedRows, error: insertError } = await supabase
       .from('picks')
