@@ -9,237 +9,245 @@ type PickRow = {
   game: string;
   pick: string;
   odds: number;
-  confidence: string | number;
-  stake: number;
-  result: string;
-  game_time?: string | null;
+  confidence: string | number | null;
+  stake: number | null;
+  result: string | null;
   sportsbook?: string | null;
   edge?: number | null;
   ev?: number | null;
   analysis?: string | null;
-  tag?: string | null;
+  game_time?: string | null;
+  commence_time?: string | null;
+  market_probability?: number | null;
+  model_probability?: number | null;
+  play_rating?: string | null;
 };
 
 function getSupabase() {
   const url =
-    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
+    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   const anon =
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    '';
+    process.env.SUPABASE_ANON_KEY;
 
-  // Do not crash the page if env vars are missing
   if (!url || !anon) {
-    return null;
+    throw new Error(
+      'Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY/SUPABASE_ANON_KEY'
+    );
   }
 
   return createClient(url, anon);
 }
 
-function formatOdds(odds: number) {
-  if (typeof odds !== 'number' || Number.isNaN(odds)) return '--';
-  if (odds > 0) return `+${odds}`;
-  return `${odds}`;
+function formatOdds(odds: number | null | undefined) {
+  if (odds === null || odds === undefined || Number.isNaN(Number(odds))) {
+    return '—';
+  }
+
+  const value = Number(odds);
+  return value > 0 ? `+${value}` : `${value}`;
 }
 
-function formatDateTime(value?: string | null) {
+function formatPercent(
+  value: number | string | null | undefined,
+  digits = 2,
+  addPercentSign = true
+) {
+  if (value === null || value === undefined || value === '') return '—';
+
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+
+  const fixed =
+    digits === 0 ? `${Math.round(num)}` : num.toFixed(digits);
+
+  return addPercentSign ? `${fixed}%` : fixed;
+}
+
+function formatConfidence(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return '—';
+
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+
+  return `${Math.round(num)}%`;
+}
+
+function formatDateTime(value: string | null | undefined) {
   if (!value) return '—';
 
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
 
-  return d.toLocaleString('en-US', {
+  return new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  });
+  }).format(date);
 }
 
-function formatPercent(value?: number | null) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) {
-    return '--';
-  }
-
-  return `${Number(value).toFixed(2)}%`;
+function normalizeResult(result: string | null | undefined) {
+  if (!result) return 'pending';
+  return result;
 }
 
-function formatConfidence(value: string | number) {
-  if (value === null || value === undefined || value === '') return '--';
+function getRatingClasses(rating: string | null | undefined) {
+  const value = (rating || '').toUpperCase();
 
-  if (typeof value === 'string') {
-    return value;
+  if (value === 'MAX PLAY') {
+    return 'text-emerald-400';
   }
 
-  if (typeof value === 'number' && !Number.isNaN(value)) {
-    return `${Math.round(value)}%`;
+  if (value === 'A PLAY') {
+    return 'text-cyan-400';
   }
 
-  return '--';
-}
-
-async function getPicks(): Promise<{
-  picks: PickRow[];
-  error: string | null;
-}> {
-  try {
-    const supabase = getSupabase();
-
-    if (!supabase) {
-      return {
-        picks: [],
-        error:
-          'Missing Supabase env variables. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel.',
-      };
-    }
-
-    const { data, error } = await supabase
-      .from('picks')
-      .select('*')
-      .order('game_time', { ascending: true, nullsFirst: false });
-
-    if (error) {
-      return {
-        picks: [],
-        error: error.message,
-      };
-    }
-
-    return {
-      picks: (data || []) as PickRow[],
-      error: null,
-    };
-  } catch (err) {
-    return {
-      picks: [],
-      error: err instanceof Error ? err.message : 'Unknown server error',
-    };
+  if (value === 'B PLAY') {
+    return 'text-yellow-300';
   }
+
+  return 'text-white';
 }
 
 export default async function PicksPage() {
-  const { picks, error } = await getPicks();
+  const supabase = getSupabase();
 
-  return (
-    <main className="min-h-screen bg-black px-4 py-8 text-white md:px-8">
-      <div className="mx-auto max-w-6xl">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold">Today&apos;s Picks</h1>
-          <p className="mt-2 text-white/60">
-            Sharp moneyline picks generated from market price comparisons.
+  const { data, error } = await supabase
+    .from('picks')
+    .select('*')
+    .order('game_time', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    return (
+      <main className="min-h-screen bg-black px-6 py-10 text-white">
+        <div className="mx-auto max-w-6xl">
+          <h1 className="text-4xl font-bold">Today&apos;s Picks</h1>
+          <p className="mt-4 text-red-400">
+            Failed to load picks: {error.message}
           </p>
         </div>
+      </main>
+    );
+  }
 
-        {error ? (
-          <div className="rounded-3xl border border-red-500/20 bg-red-500/10 p-8 text-red-200">
-            <div className="text-xl font-bold">Picks Error</div>
-            <p className="mt-3 break-words text-sm">{error}</p>
-          </div>
-        ) : picks.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-8 text-white/70">
-            No picks found.
+  const picks = ((data as PickRow[] | null) || []).filter(Boolean);
+
+  return (
+    <main className="min-h-screen bg-black px-6 py-10 text-white">
+      <div className="mx-auto max-w-6xl">
+        <h1 className="text-4xl font-bold">Today&apos;s Picks</h1>
+        <p className="mt-3 text-lg text-white/70">
+          Sharp moneyline picks generated from market price comparisons.
+        </p>
+
+        {picks.length === 0 ? (
+          <div className="mt-10 rounded-3xl border border-white/10 bg-white/5 p-8">
+            <p className="text-lg text-white/80">
+              No picks available right now.
+            </p>
           </div>
         ) : (
-          <div className="space-y-8">
+          <div className="mt-10 space-y-10">
             {picks.map((pick) => (
-              <div
+              <section
                 key={pick.id}
-                className="rounded-3xl border border-white/10 bg-gradient-to-r from-white/5 via-white/[0.03] to-white/5 p-6 shadow-2xl"
+                className="rounded-[32px] border border-white/10 bg-gradient-to-r from-white/[0.04] via-white/[0.02] to-white/[0.04] p-7 shadow-2xl"
               >
-                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <div className="mb-2 text-sm uppercase tracking-wide text-white/50">
-                      {pick.sport || 'N/A'}
-                    </div>
+                    <p className="text-sm uppercase tracking-[0.2em] text-white/45">
+                      {pick.sport || 'Pick'}
+                    </p>
+                    <h2 className="mt-2 text-3xl font-bold tracking-tight">
+                      {pick.pick}
+                    </h2>
+                    <p className="mt-2 text-2xl text-white/75">{pick.game}</p>
+                  </div>
 
-                    <div className="flex flex-wrap items-center gap-3">
-                      <h2 className="text-3xl font-bold">
-                        {pick.pick || 'N/A'}
-                      </h2>
+                  <div className="text-left lg:text-right">
+                    <p className="text-sm text-white/50">Odds</p>
+                    <p className="text-6xl font-bold tracking-tight">
+                      {formatOdds(pick.odds)}
+                    </p>
+                  </div>
+                </div>
 
-                      {pick.tag && (
-                        <span className="rounded-full bg-green-500/20 px-3 py-1 text-sm font-semibold text-green-300">
-                          {pick.tag}
-                        </span>
-                      )}
-                    </div>
-
-                    <p className="mt-2 text-2xl text-white/80">
-                      {pick.game || 'N/A'}
+                <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-3xl bg-white/[0.04] p-5">
+                    <p className="text-sm text-white/55">Confidence</p>
+                    <p className="mt-2 text-2xl font-semibold">
+                      {formatConfidence(pick.confidence)}
                     </p>
                   </div>
 
-                  <div className="text-left md:text-right">
-                    <div className="text-sm text-white/50">Odds</div>
-                    <div className="text-5xl font-bold">
-                      {formatOdds(pick.odds)}
-                    </div>
+                  <div className="rounded-3xl bg-white/[0.04] p-5">
+                    <p className="text-sm text-white/55">Stake</p>
+                    <p className="mt-2 text-2xl font-semibold">
+                      {pick.stake ?? '—'}
+                    </p>
+                  </div>
+
+                  <div className="rounded-3xl bg-white/[0.04] p-5">
+                    <p className="text-sm text-white/55">Result</p>
+                    <p className="mt-2 text-2xl font-semibold">
+                      {normalizeResult(pick.result)}
+                    </p>
+                  </div>
+
+                  <div className="rounded-3xl bg-white/[0.04] p-5">
+                    <p className="text-sm text-white/55">Game Time</p>
+                    <p className="mt-2 text-2xl font-semibold">
+                      {formatDateTime(pick.game_time || pick.commence_time)}
+                    </p>
+                  </div>
+
+                  <div className="rounded-3xl bg-white/[0.04] p-5">
+                    <p className="text-sm text-white/55">Sportsbook</p>
+                    <p className="mt-2 text-2xl font-semibold">
+                      {pick.sportsbook || '—'}
+                    </p>
+                  </div>
+
+                  <div className="rounded-3xl bg-white/[0.04] p-5">
+                    <p className="text-sm text-white/55">Edge</p>
+                    <p className="mt-2 text-2xl font-semibold text-emerald-400">
+                      {formatPercent(pick.edge)}
+                    </p>
+                  </div>
+
+                  <div className="rounded-3xl bg-white/[0.04] p-5">
+                    <p className="text-sm text-white/55">EV</p>
+                    <p className="mt-2 text-2xl font-semibold text-emerald-400">
+                      {formatPercent(pick.ev)}
+                    </p>
+                  </div>
+
+                  <div className="rounded-3xl bg-white/[0.04] p-5">
+                    <p className="text-sm text-white/55">Play Rating</p>
+                    <p
+                      className={`mt-2 text-2xl font-semibold ${getRatingClasses(
+                        pick.play_rating
+                      )}`}
+                    >
+                      {pick.play_rating || '—'}
+                    </p>
                   </div>
                 </div>
 
-                <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-                  <Stat
-                    title="Confidence"
-                    value={formatConfidence(pick.confidence)}
-                  />
-                  <Stat title="Stake" value={pick.stake ?? '--'} />
-                  <Stat title="Result" value={pick.result || '--'} />
-                  <Stat
-                    title="Game Time"
-                    value={formatDateTime(pick.game_time)}
-                  />
-                  <Stat title="Sportsbook" value={pick.sportsbook || 'N/A'} />
-                  <Stat
-                    title="Edge"
-                    value={formatPercent(pick.edge)}
-                    highlight={typeof pick.edge === 'number' && pick.edge > 10}
-                  />
-                  <Stat
-                    title="EV"
-                    value={formatPercent(pick.ev)}
-                    highlight={typeof pick.ev === 'number' && pick.ev > 10}
-                  />
-                  <Stat
-                    title="Created"
-                    value={formatDateTime(pick.created_at)}
-                  />
-                </div>
-
-                <div className="mt-4 rounded-2xl bg-white/5 p-5">
-                  <div className="text-sm text-white/50">Analysis</div>
-                  <p className="mt-3 text-xl leading-9 text-white/85">
+                <div className="mt-5 rounded-3xl bg-white/[0.04] p-5">
+                  <p className="text-sm text-white/55">Analysis</p>
+                  <p className="mt-3 text-xl leading-10 text-white/92">
                     {pick.analysis || 'No analysis available.'}
                   </p>
                 </div>
-              </div>
+              </section>
             ))}
           </div>
         )}
       </div>
     </main>
-  );
-}
-
-function Stat({
-  title,
-  value,
-  highlight = false,
-}: {
-  title: string;
-  value: React.ReactNode;
-  highlight?: boolean;
-}) {
-  return (
-    <div className="rounded-2xl bg-white/5 p-5">
-      <div className="text-sm text-white/50">{title}</div>
-      <div
-        className={`mt-2 text-2xl font-bold ${
-          highlight ? 'text-green-400' : ''
-        }`}
-      >
-        {value}
-      </div>
-    </div>
   );
 }
