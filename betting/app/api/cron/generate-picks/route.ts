@@ -249,7 +249,7 @@ async function handleGenerate(req: NextRequest) {
         const edge = (modelProb - marketProb) * 100;
         const ev = calcEvPercent(modelProb, bestPrice.price);
 
-        if (edge < 3.5) continue;
+        if (edge < 3.25) continue;
         if (ev < 3) continue;
 
         const playRating = getPlayRating(edge, ev);
@@ -293,26 +293,36 @@ async function handleGenerate(req: NextRequest) {
       }
     }
 
-    if (picksToInsert.length === 0) {
+    const finalPicks = picksToInsert
+      .sort((a, b) => {
+        if (b.ev !== a.ev) return b.ev - a.ev;
+        if (b.edge !== a.edge) return b.edge - a.edge;
+        return a.game.localeCompare(b.game);
+      })
+      .slice(0, 5);
+
+    if (finalPicks.length === 0) {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No qualifying pro-level sharp picks found today.',
+        message: 'No qualifying perfect-setup sharp picks found today.',
         debug: {
           eventsChecked,
           candidatesFound,
+          finalSelected: 0,
           phoenixHour,
           modelMode: isEarly ? 'early' : 'late',
           minBooks: 3,
-          minEdge: 3.5,
+          minEdge: 3.25,
           minEv: 3,
+          maxPicksPerRun: 5,
         },
       });
     }
 
     const { data, error } = await supabase
       .from('picks')
-      .upsert(picksToInsert, {
+      .upsert(finalPicks, {
         onConflict: 'dedupe_key',
       })
       .select();
@@ -328,11 +338,13 @@ async function handleGenerate(req: NextRequest) {
       debug: {
         eventsChecked,
         candidatesFound,
+        finalSelected: finalPicks.length,
         phoenixHour,
         modelMode: isEarly ? 'early' : 'late',
         minBooks: 3,
-        minEdge: 3.5,
+        minEdge: 3.25,
         minEv: 3,
+        maxPicksPerRun: 5,
       },
     });
   } catch (error) {
