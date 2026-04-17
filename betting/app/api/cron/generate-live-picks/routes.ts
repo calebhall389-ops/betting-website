@@ -29,12 +29,17 @@ type OddsEvent = {
   bookmakers: Bookmaker[];
 };
 
+type RecentPick = {
+  odds: number;
+  created_at: string;
+  is_live: boolean;
+};
+
 type Candidate = {
   eventId: string;
   sport: string;
   game: string;
   pick: string;
-  team: string;
   odds: number;
   previousOdds: number | null;
   lineMovement: number | null;
@@ -98,24 +103,9 @@ function americanToImpliedProb(odds: number): number {
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
-function probToAmerican(prob: number): number {
-  if (prob <= 0 || prob >= 1) return 0;
-  if (prob >= 0.5) {
-    return Math.round(-(prob / (1 - prob)) * 100);
-  }
-  return Math.round(((1 - prob) / prob) * 100);
-}
-
 function calcEv(modelProb: number, odds: number): number {
   const decimalOdds = odds > 0 ? 1 + odds / 100 : 1 + 100 / Math.abs(odds);
   return (modelProb * decimalOdds - 1) * 100;
-}
-
-function getKellyFraction(modelProb: number, odds: number): number {
-  const b = odds > 0 ? odds / 100 : 100 / Math.abs(odds);
-  const q = 1 - modelProb;
-  const rawKelly = (b * modelProb - q) / b;
-  return Math.max(0, rawKelly);
 }
 
 function getStakeUnits(edge: number, ev: number): number {
@@ -124,8 +114,12 @@ function getStakeUnits(edge: number, ev: number): number {
   return 1;
 }
 
-function getPlayRating(edge: number, ev: number, lineMovement: number | null): string {
-  const steam = lineMovement !== null && lineMovement >= 10;
+function getPlayRating(
+  edge: number,
+  ev: number,
+  lineMovement: number | null
+): string {
+  const steam = lineMovement !== null && Math.abs(lineMovement) >= 10;
 
   if (edge >= 8 && ev >= 10 && steam) return 'MAX PLAY';
   if (edge >= 7 && ev >= 8) return 'A PLAY';
@@ -160,7 +154,7 @@ function buildAnalysis(params: {
 
   const moveText =
     previousOdds !== null && lineMovement !== null
-      ? ` Previous scan: ${previousOdds > 0 ? `+${previousOdds}` : previousOdds}. Line movement: ${lineMovement > 0 ? '+' : ''}${lineMovement}.`
+      ? ` Previous scan: ${previousOdds > 0 ? `+${previousOdds}` : previousOdds}. Line movement: ${lineMovement > 0 ? `+${lineMovement}` : lineMovement}.`
       : '';
 
   return `${pick} is showing live value at ${sportsbook}. Current price: ${
@@ -176,6 +170,7 @@ function buildAnalysis(params: {
 
 async function fetchOddsForSport(sport: string): Promise<OddsEvent[]> {
   const apiKey = process.env.ODDS_API_KEY;
+
   if (!apiKey) {
     throw new Error('Missing ODDS_API_KEY');
   }
@@ -202,13 +197,13 @@ async function fetchOddsForSport(sport: string): Promise<OddsEvent[]> {
 }
 
 async function fetchAllOdds(): Promise<OddsEvent[]> {
-  const settled = await Promise.allSettled(
+  const results = await Promise.allSettled(
     SUPPORTED_SPORTS.map((sport) => fetchOddsForSport(sport))
   );
 
   const all: OddsEvent[] = [];
 
-  for (const result of settled) {
+  for (const result of results) {
     if (result.status === 'fulfilled') {
       all.push(...result.value);
     }
@@ -220,14 +215,21 @@ async function fetchAllOdds(): Promise<OddsEvent[]> {
 function normalizeBooks(event: OddsEvent): OddsEvent {
   return {
     ...event,
-    bookmakers: (event.bookmakers || []).filter((b) => ALLOWED_BOOKS.has(b.key)),
+    bookmakers: (event.bookmakers || []).filter((book) =>
+      ALLOWED_BOOKS.has(book.key)
+    ),
   };
 }
 
-function eventStartsSoon(commenceTime: string, minMinutes = 5, maxMinutes = 180): boolean {
+function eventStartsSoon(
+  commenceTime: string,
+  minMinutes = 5,
+  maxMinutes = 180
+): boolean {
   const now = Date.now();
   const start = new Date(commenceTime).getTime();
   const diffMinutes = (start - now) / 1000 / 60;
+
   return diffMinutes >= minMinutes && diffMinutes <= maxMinutes;
 }
 
@@ -243,12 +245,16 @@ async function getRecentPickMap(supabase: ReturnType<typeof getSupabase>) {
     throw new Error(`Failed to read recent picks: ${error.message}`);
   }
 
-  const map = new Map<string, { odds: number; created_at: string; is_live: boolean }>();
+  const map = new Map<string, RecentPick>();
 
   for (const row of data || []) {
     const key = `${row.game}__${row.pick}`;
     const existing = map.get(key);
-    if (!existing || new Date(row.created_at).getTime() > new Date(existing.created_at).getTime()) {
+
+    if (
+      !existing ||
+      new Date(row.created_at).getTime() > new Date(existing.created_at).getTime()
+    ) {
       map.set(key, {
         odds: Number(row.odds),
         created_at: row.created_at,
@@ -260,11 +266,14 @@ async function getRecentPickMap(supabase: ReturnType<typeof getSupabase>) {
   return map;
 }
 
-function makeCandidate(event: OddsEvent, recentPickMap: Map<string, { odds: number }>): Candidate[] {
+function makeCandidates(
+  event: OddsEvent,
+  recentPickMap: Map<string, RecentPick>
+): Candidate[] {
   const candidates: Candidate[] = [];
 
   for (const bookmaker of event.bookmakers || []) {
-    const h2h = bookmaker.markets?.find((m) => m.key === 'h2h');
+    const h2h = bookmaker.markets?.find((market) => market.key === 'h2h');
     if (!h2h || !h2h.outcomes || h2h.outcomes.length < 2) continue;
 
     for (const outcome of h2h.outcomes) {
@@ -273,15 +282,12 @@ function makeCandidate(event: OddsEvent, recentPickMap: Map<string, { odds: numb
 
       const implied = americanToImpliedProb(odds);
 
-      // Small built-in model edge for live scanner.
-      // You can replace this later with your own sharper model.
       let modelProb = implied + 0.035;
 
-      // Extra bump if the favorite is modest, smaller bump for big dogs.
       if (odds >= -140 && odds <= 130) modelProb += 0.01;
       if (Math.abs(odds) >= 180) modelProb -= 0.005;
 
-      modelProb = Math.min(0.80, Math.max(0.20, modelProb));
+      modelProb = Math.min(0.8, Math.max(0.2, modelProb));
 
       const edge = (modelProb - implied) * 100;
       const ev = calcEv(modelProb, odds);
@@ -324,7 +330,6 @@ function makeCandidate(event: OddsEvent, recentPickMap: Map<string, { odds: numb
         sport: event.sport_title,
         game,
         pick,
-        team: outcome.name,
         odds,
         previousOdds,
         lineMovement,
@@ -358,23 +363,23 @@ async function insertCandidates(
     return { inserted: 0, rows: [] as Candidate[] };
   }
 
-  const rows = candidates.map((c) => ({
-    sport: c.sport,
-    game: c.game,
-    pick: c.pick,
-    odds: c.odds,
-    confidence: String(c.confidence),
-    stake: c.stake,
+  const rows = candidates.map((candidate) => ({
+    sport: candidate.sport,
+    game: candidate.game,
+    pick: candidate.pick,
+    odds: candidate.odds,
+    confidence: String(candidate.confidence),
+    stake: candidate.stake,
     result: 'pending',
-    analysis: c.analysis,
-    sportsbook: c.sportsbook,
+    analysis: candidate.analysis,
+    sportsbook: candidate.sportsbook,
     status: 'active',
-    play_rating: c.playRating,
-    is_live: c.isLive,
-    market_type: c.marketType,
-    commence_time: c.commenceTime,
-    line_movement: c.lineMovement,
-    previous_odds: c.previousOdds,
+    play_rating: candidate.playRating,
+    is_live: candidate.isLive,
+    market_type: candidate.marketType,
+    commence_time: candidate.commenceTime,
+    line_movement: candidate.lineMovement,
+    previous_odds: candidate.previousOdds,
     odds_last_seen_at: new Date().toISOString(),
   }));
 
@@ -396,6 +401,7 @@ export async function GET(req: NextRequest) {
 
     if (expectedSecret) {
       const incoming = getCronSecretFromReq(req);
+
       if (incoming !== expectedSecret) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
@@ -412,14 +418,15 @@ export async function GET(req: NextRequest) {
     let candidates: Candidate[] = [];
 
     for (const event of allEvents) {
-      candidates.push(...makeCandidate(event, recentPickMap));
+      candidates.push(...makeCandidates(event, recentPickMap));
     }
 
-    // De-dupe by game + pick, keep best EV only
     const dedupedMap = new Map<string, Candidate>();
+
     for (const candidate of candidates) {
       const key = `${candidate.game}__${candidate.pick}`;
       const existing = dedupedMap.get(key);
+
       if (!existing || candidate.ev > existing.ev) {
         dedupedMap.set(key, candidate);
       }
@@ -427,22 +434,21 @@ export async function GET(req: NextRequest) {
 
     candidates = Array.from(dedupedMap.values());
 
-    // Only keep improved prices vs recent scan if already seen
-    candidates = candidates.filter((c) => {
-      const previousKey = `${c.game}__${c.pick}`;
+    candidates = candidates.filter((candidate) => {
+      const previousKey = `${candidate.game}__${candidate.pick}`;
       const previous = recentPickMap.get(previousKey);
+
       if (!previous) return true;
-      return c.odds !== previous.odds;
+
+      return candidate.odds !== previous.odds;
     });
 
-    // Keep live board tight
     candidates.sort((a, b) => {
       if (b.ev !== a.ev) return b.ev - a.ev;
       return b.edge - a.edge;
     });
 
     const finalSelected = candidates.slice(0, 8);
-
     const result = await insertCandidates(supabase, finalSelected);
 
     return NextResponse.json({
