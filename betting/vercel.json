@@ -1,8 +1,13 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
-      "path": "/api/picks/generate",
+      "path": "/api/props/generate",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/picks/generate",
+      "schedule": "0 16 * * *"
     },
     {
       "path": "/api/picks/generate",
