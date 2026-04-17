@@ -28,7 +28,7 @@ function getSupabase() {
     process.env.SUPABASE_ANON_KEY ||
     '';
 
-  // ❗ DO NOT crash app if missing
+  // Do not crash the page if env vars are missing
   if (!url || !anon) {
     return null;
   }
@@ -66,9 +66,17 @@ function formatPercent(value?: number | null) {
 }
 
 function formatConfidence(value: string | number) {
-  const num = typeof value === 'string' ? Number(value) : value;
-  if (Number.isNaN(num)) return '--';
-  return `${Math.round(num)}%`;
+  if (value === null || value === undefined || value === '') return '--';
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (typeof value === 'number' && !Number.isNaN(value)) {
+    return `${Math.round(value)}%`;
+  }
+
+  return '--';
 }
 
 async function getPicks(): Promise<{
@@ -89,8 +97,7 @@ async function getPicks(): Promise<{
     const { data, error } = await supabase
       .from('picks')
       .select('*')
-      .order('game_time', { ascending: true })
-      .order('created_at', { ascending: false });
+      .order('game_time', { ascending: true, nullsFirst: false });
 
     if (error) {
       return {
@@ -115,9 +122,8 @@ export default async function PicksPage() {
   const { picks, error } = await getPicks();
 
   return (
-    <main className="min-h-screen bg-black text-white px-4 py-8 md:px-8">
+    <main className="min-h-screen bg-black px-4 py-8 text-white md:px-8">
       <div className="mx-auto max-w-6xl">
-        {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold">Today&apos;s Picks</h1>
           <p className="mt-2 text-white/60">
@@ -125,7 +131,6 @@ export default async function PicksPage() {
           </p>
         </div>
 
-        {/* ❗ Error state (NO CRASH anymore) */}
         {error ? (
           <div className="rounded-3xl border border-red-500/20 bg-red-500/10 p-8 text-red-200">
             <div className="text-xl font-bold">Picks Error</div>
@@ -142,7 +147,6 @@ export default async function PicksPage() {
                 key={pick.id}
                 className="rounded-3xl border border-white/10 bg-gradient-to-r from-white/5 via-white/[0.03] to-white/5 p-6 shadow-2xl"
               >
-                {/* Top */}
                 <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                   <div>
                     <div className="mb-2 text-sm uppercase tracking-wide text-white/50">
@@ -174,19 +178,34 @@ export default async function PicksPage() {
                   </div>
                 </div>
 
-                {/* Stats */}
                 <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-                  <Stat title="Confidence" value={formatConfidence(pick.confidence)} />
+                  <Stat
+                    title="Confidence"
+                    value={formatConfidence(pick.confidence)}
+                  />
                   <Stat title="Stake" value={pick.stake ?? '--'} />
                   <Stat title="Result" value={pick.result || '--'} />
-                  <Stat title="Game Time" value={formatDateTime(pick.game_time)} />
+                  <Stat
+                    title="Game Time"
+                    value={formatDateTime(pick.game_time)}
+                  />
                   <Stat title="Sportsbook" value={pick.sportsbook || 'N/A'} />
-                  <Stat title="Edge" value={formatPercent(pick.edge)} />
-                  <Stat title="EV" value={formatPercent(pick.ev)} />
-                  <Stat title="Created" value={formatDateTime(pick.created_at)} />
+                  <Stat
+                    title="Edge"
+                    value={formatPercent(pick.edge)}
+                    highlight={typeof pick.edge === 'number' && pick.edge > 10}
+                  />
+                  <Stat
+                    title="EV"
+                    value={formatPercent(pick.ev)}
+                    highlight={typeof pick.ev === 'number' && pick.ev > 10}
+                  />
+                  <Stat
+                    title="Created"
+                    value={formatDateTime(pick.created_at)}
+                  />
                 </div>
 
-                {/* Analysis */}
                 <div className="mt-4 rounded-2xl bg-white/5 p-5">
                   <div className="text-sm text-white/50">Analysis</div>
                   <p className="mt-3 text-xl leading-9 text-white/85">
@@ -202,12 +221,25 @@ export default async function PicksPage() {
   );
 }
 
-/* 🔥 Reusable stat box */
-function Stat({ title, value }: { title: string; value: any }) {
+function Stat({
+  title,
+  value,
+  highlight = false,
+}: {
+  title: string;
+  value: React.ReactNode;
+  highlight?: boolean;
+}) {
   return (
     <div className="rounded-2xl bg-white/5 p-5">
       <div className="text-sm text-white/50">{title}</div>
-      <div className="mt-2 text-2xl font-bold">{value}</div>
+      <div
+        className={`mt-2 text-2xl font-bold ${
+          highlight ? 'text-green-400' : ''
+        }`}
+      >
+        {value}
+      </div>
     </div>
   );
 }
