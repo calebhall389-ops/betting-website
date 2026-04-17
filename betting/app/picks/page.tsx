@@ -5,7 +5,6 @@ export const dynamic = 'force-dynamic';
 type PickRow = {
   id: string;
   created_at: string;
-  pick_date: string;
   sport: string;
   game: string;
   pick: string;
@@ -15,148 +14,176 @@ type PickRow = {
   result: string;
   analysis?: string | null;
   sportsbook?: string | null;
-  play_rating?: string | null;
   edge?: number | null;
   ev?: number | null;
+  play_rating?: string | null;
+  game_date?: string | null;
+  status?: string | null;
 };
 
 function getSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const anon =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
   if (!url || !anon) {
     throw new Error(
-      'Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY'
+      'Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY/SUPABASE_ANON_KEY'
     );
   }
 
   return createClient(url, anon);
 }
 
-function getArizonaYmd(date: Date) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Phoenix',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
-}
-
-function addDaysYmd(base: Date, days: number) {
-  const d = new Date(base);
-  d.setUTCDate(d.getUTCDate() + days);
-  return getArizonaYmd(d);
+function isSameLocalDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
 }
 
 function formatOdds(odds: number) {
   return odds > 0 ? `+${odds}` : `${odds}`;
 }
 
-function renderPickCard(pick: PickRow) {
-  return (
-    <div
-      key={pick.id}
-      className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 shadow-sm"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-lg font-semibold text-white">{pick.pick}</div>
-          <div className="text-sm text-zinc-400">{pick.game}</div>
-        </div>
-
-        <div className="rounded-full border border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-200">
-          {pick.play_rating || 'PLAY'}
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-3 text-sm text-zinc-300">
-        <span>{pick.sport}</span>
-        <span>{pick.sportsbook || 'Sportsbook N/A'}</span>
-        <span>{formatOdds(pick.odds)}</span>
-        {pick.edge !== null && pick.edge !== undefined ? (
-          <span>Edge: {pick.edge}%</span>
-        ) : null}
-        {pick.ev !== null && pick.ev !== undefined ? (
-          <span>EV: {pick.ev}%</span>
-        ) : null}
-        <span>Confidence: {pick.confidence}%</span>
-      </div>
-
-      {pick.analysis ? (
-        <p className="mt-3 text-sm leading-6 text-zinc-300">{pick.analysis}</p>
-      ) : null}
-    </div>
-  );
+function formatPercent(value?: number | null) {
+  if (typeof value !== 'number') return '0%';
+  return `${value}%`;
 }
 
 export default async function PicksPage() {
   const supabase = getSupabase();
 
-  const now = new Date();
-  const today = getArizonaYmd(now);
-  const tomorrow = addDaysYmd(now, 1);
+  const { data, error } = await supabase
+    .from('picks')
+    .select(
+      'id, created_at, sport, game, pick, odds, confidence, stake, result, analysis, sportsbook, edge, ev, play_rating, game_date, status'
+    )
+    .eq('status', 'pending')
+    .order('game_date', { ascending: true });
 
-  const [{ data: todayPicks, error: todayError }, { data: tomorrowPicks, error: tomorrowError }] =
-    await Promise.all([
-      supabase
-        .from('picks')
-        .select('*')
-        .eq('pick_date', today)
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('picks')
-        .select('*')
-        .eq('pick_date', tomorrow)
-        .order('created_at', { ascending: false }),
-    ]);
-
-  if (todayError || tomorrowError) {
-    return (
-      <main className="mx-auto max-w-6xl px-4 py-10">
-        <h1 className="text-3xl font-bold text-white">Picks</h1>
-        <p className="mt-4 text-zinc-400">
-          Failed to load picks right now.
-        </p>
-      </main>
-    );
+  if (error) {
+    throw new Error(error.message);
   }
 
+  const picks = (data ?? []) as PickRow[];
+
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+
+  const todaysPicks = picks.filter((pick) => {
+    if (!pick.game_date) return false;
+    return isSameLocalDay(new Date(pick.game_date), now);
+  });
+
+  const tomorrowsPicks = picks.filter((pick) => {
+    if (!pick.game_date) return false;
+    return isSameLocalDay(new Date(pick.game_date), tomorrow);
+  });
+
   return (
-    <main className="mx-auto max-w-6xl px-4 py-10">
-      <div className="mb-10">
-        <h1 className="text-3xl font-bold text-white">Sharp Picks</h1>
-        <p className="mt-2 text-zinc-400">
-          Official model-generated moneyline plays for today and tomorrow.
-        </p>
+    <main className="min-h-screen bg-[#020817] text-white">
+      <div className="mx-auto max-w-6xl px-6 py-12">
+        <div className="mb-12">
+          <h1 className="text-5xl font-bold tracking-tight">Sharp Picks</h1>
+          <p className="mt-3 text-lg text-gray-400">
+            Official model-generated moneyline plays for today and tomorrow.
+          </p>
+        </div>
+
+        <section className="mb-14">
+          <h2 className="mb-5 text-3xl font-semibold">Today&apos;s Picks</h2>
+
+          {todaysPicks.length === 0 ? (
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-gray-400">
+              No sharp plays found today.
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {todaysPicks.map((pick) => (
+                <div
+                  key={pick.id}
+                  className="rounded-3xl border border-white/10 bg-[#061028] p-6"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-2xl font-semibold">{pick.pick}</h3>
+                      <p className="mt-1 text-gray-400">{pick.game}</p>
+
+                      <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-300">
+                        <span>{pick.sport}</span>
+                        <span>{pick.sportsbook ?? '—'}</span>
+                        <span>{formatOdds(pick.odds)}</span>
+                        <span>Edge: {formatPercent(pick.edge)}</span>
+                        <span>EV: {formatPercent(pick.ev)}</span>
+                        <span>Confidence: {pick.confidence}%</span>
+                      </div>
+
+                      {pick.analysis ? (
+                        <p className="mt-4 text-base leading-7 text-gray-300">
+                          {pick.analysis}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="shrink-0 rounded-full border border-white/15 px-4 py-2 text-sm text-white/90">
+                      {pick.play_rating ?? 'PLAY'}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <h2 className="mb-5 text-3xl font-semibold">Tomorrow&apos;s Picks</h2>
+
+          {tomorrowsPicks.length === 0 ? (
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-gray-400">
+              Tomorrow&apos;s lines are still developing. Check back later tonight or in the morning.
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {tomorrowsPicks.map((pick) => (
+                <div
+                  key={pick.id}
+                  className="rounded-3xl border border-white/10 bg-[#061028] p-6"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-2xl font-semibold">{pick.pick}</h3>
+                      <p className="mt-1 text-gray-400">{pick.game}</p>
+
+                      <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-300">
+                        <span>{pick.sport}</span>
+                        <span>{pick.sportsbook ?? '—'}</span>
+                        <span>{formatOdds(pick.odds)}</span>
+                        <span>Edge: {formatPercent(pick.edge)}</span>
+                        <span>EV: {formatPercent(pick.ev)}</span>
+                        <span>Confidence: {pick.confidence}%</span>
+                      </div>
+
+                      {pick.analysis ? (
+                        <p className="mt-4 text-base leading-7 text-gray-300">
+                          {pick.analysis}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="shrink-0 rounded-full border border-white/15 px-4 py-2 text-sm text-white/90">
+                      {pick.play_rating ?? 'PLAY'}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
-
-      <section className="mb-12">
-        <h2 className="mb-4 text-2xl font-semibold text-white">Today’s Picks</h2>
-
-        {!todayPicks?.length ? (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-zinc-400">
-            No sharp plays found today.
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            {(todayPicks as PickRow[]).map(renderPickCard)}
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-4 text-2xl font-semibold text-white">Tomorrow’s Picks</h2>
-
-        {!tomorrowPicks?.length ? (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-zinc-400">
-            Tomorrow’s lines are still developing. Check back later tonight or in the morning.
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            {(tomorrowPicks as PickRow[]).map(renderPickCard)}
-          </div>
-        )}
-      </section>
     </main>
   );
 }
