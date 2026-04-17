@@ -12,7 +12,7 @@ export default function HomePage() {
             className="h-full w-full bg-cover bg-center opacity-25"
             style={{
               backgroundImage:
-                "url('https://images.unsplash.com/photo-1606167668584-78701c57f13d?auto=format&fit=crop&w=1600&q=80')",
+                "url('https://images.unsplash.com/photo-1605902711622-cfb43c44367f?auto=format&fit=crop&w=1600&q=80')",
             }}
           />
           <div className="absolute inset-0 bg-gradient-to-b from-[#020817]/70 via-[#020817]/85 to-[#020817]" />
