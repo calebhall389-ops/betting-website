@@ -147,7 +147,9 @@ function getAllowedBookmakers(): string[] {
   ];
 }
 
-function buildSidesFromBookmakers(bookmakers: OddsBookmaker[] | undefined): SideMap {
+function buildSidesFromBookmakers(
+  bookmakers: OddsBookmaker[] | undefined
+): SideMap {
   const sides: SideMap = {};
 
   if (!bookmakers || bookmakers.length === 0) return sides;
@@ -157,7 +159,10 @@ function buildSidesFromBookmakers(bookmakers: OddsBookmaker[] | undefined): Side
       if (market.key !== 'h2h') continue;
 
       for (const outcome of market.outcomes || []) {
-        if (typeof outcome.price !== 'number' || !Number.isFinite(outcome.price)) {
+        if (
+          typeof outcome.price !== 'number' ||
+          !Number.isFinite(outcome.price)
+        ) {
           continue;
         }
 
@@ -182,7 +187,10 @@ function buildSidesFromBookmakers(bookmakers: OddsBookmaker[] | undefined): Side
   return sides;
 }
 
-function getConsensusFairOdds(sideName: string, sides: SideMap): {
+function getConsensusFairOdds(
+  sideName: string,
+  sides: SideMap
+): {
   fairProbability: number;
   fairAmericanOdds: number;
 } | null {
@@ -228,7 +236,9 @@ function getPlayRating(edge: number, ev: number): string {
   return 'NO PLAY';
 }
 
-function getStakeUnits(playRating: string): number {
+function getStakeUnits(playRating: string, odds: number): number {
+  if (odds >= 300) return 1;
+
   switch (playRating) {
     case 'MAX PLAY':
       return 3;
@@ -293,7 +303,11 @@ export async function GET(req: NextRequest) {
 
     for (const sport of sportsToCheck) {
       try {
-        const events = await fetchOddsForSport(sport, apiKey, allowedBookmakers);
+        const events = await fetchOddsForSport(
+          sport,
+          apiKey,
+          allowedBookmakers
+        );
         allEvents.push(...events);
       } catch (sportError) {
         console.error(`Failed loading ${sport}:`, sportError);
@@ -315,8 +329,7 @@ export async function GET(req: NextRequest) {
         const bestPrice = data.bestPrice;
         const bestBook = data.bestBook;
 
-        // Optional pricing cleanup:
-        // skip weak mid-range prices to avoid lots of junk plays
+        // Skip weak mid-range prices so the board stays sharper
         if (bestPrice > -150 && bestPrice < 120) {
           continue;
         }
@@ -329,12 +342,14 @@ export async function GET(req: NextRequest) {
 
         const edge = (modelProb - marketProb) * 100;
         const ev =
-          (modelProb * (americanToDecimal(bestPrice) - 1) - (1 - modelProb)) * 100;
+          (modelProb * (americanToDecimal(bestPrice) - 1) -
+            (1 - modelProb)) *
+          100;
 
         const playRating = getPlayRating(edge, ev);
         if (playRating === 'NO PLAY') continue;
 
-        const stake = getStakeUnits(playRating);
+        const stake = getStakeUnits(playRating, bestPrice);
         if (stake <= 0) continue;
 
         const sport = getSportLabel(event.sport_key, event.sport_title);
@@ -370,14 +385,12 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // highest-quality picks first
     picks.sort((a, b) => {
       if (b.ev !== a.ev) return b.ev - a.ev;
       if (b.edge !== a.edge) return b.edge - a.edge;
       return b.confidence - a.confidence;
     });
 
-    // avoid duplicate picks for same game + side
     const deduped = picks.filter((pick, index, arr) => {
       return (
         arr.findIndex(
@@ -386,10 +399,8 @@ export async function GET(req: NextRequest) {
       );
     });
 
-    // cap the board so your page stays sharp
     const finalPicks = deduped.slice(0, 10);
 
-    // clear only pending picks for today/tomorrow so you can regenerate cleanly
     const now = new Date();
     const startOfToday = new Date(now);
     startOfToday.setHours(0, 0, 0, 0);
