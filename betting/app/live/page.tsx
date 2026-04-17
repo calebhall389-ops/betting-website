@@ -1,4 +1,7 @@
 import { Activity } from 'lucide-react';
+import { getSupabaseAdmin } from '@/lib/supabase';
+
+export const dynamic = 'force-dynamic';
 
 type LivePick = {
   id: string;
@@ -19,15 +22,24 @@ type LivePick = {
 };
 
 async function getLivePicks(): Promise<LivePick[]> {
-  const baseUrl =
-    process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+  const supabase = getSupabaseAdmin();
 
-  const res = await fetch(`${baseUrl}/api/live`, {
-    cache: 'no-store',
-  });
+  const now = new Date();
+  const lookback = new Date(now.getTime() - 12 * 60 * 60 * 1000);
 
-  const json = await res.json();
-  return json?.picks ?? [];
+  const { data, error } = await supabase
+    .from('picks')
+    .select('*')
+    .eq('pick_type', 'live')
+    .gte('created_at', lookback.toISOString())
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as LivePick[];
 }
 
 function formatOdds(odds: number) {
