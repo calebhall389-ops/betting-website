@@ -109,8 +109,8 @@ function calcEv(modelProb: number, odds: number): number {
 }
 
 function getStakeUnits(edge: number, ev: number): number {
-  if (edge >= 7 && ev >= 9) return 2;
-  if (edge >= 5 && ev >= 6) return 1.5;
+  if (edge >= 8 && ev >= 10) return 2;
+  if (edge >= 5.5 && ev >= 6) return 1.5;
   return 1;
 }
 
@@ -122,8 +122,8 @@ function getPlayRating(
   const steam = lineMovement !== null && Math.abs(lineMovement) >= 10;
 
   if (edge >= 8 && ev >= 10 && steam) return 'MAX PLAY';
-  if (edge >= 7 && ev >= 8) return 'A PLAY';
-  if (edge >= 5 && ev >= 5) return 'B PLAY';
+  if (edge >= 6.5 && ev >= 7.5) return 'A PLAY';
+  if (edge >= 4.25 && ev >= 4.5) return 'B PLAY';
   return 'LEAN';
 }
 
@@ -154,7 +154,9 @@ function buildAnalysis(params: {
 
   const moveText =
     previousOdds !== null && lineMovement !== null
-      ? ` Previous scan: ${previousOdds > 0 ? `+${previousOdds}` : previousOdds}. Line movement: ${lineMovement > 0 ? `+${lineMovement}` : lineMovement}.`
+      ? ` Previous scan: ${previousOdds > 0 ? `+${previousOdds}` : previousOdds}. Line movement: ${
+          lineMovement > 0 ? `+${lineMovement}` : lineMovement
+        }.`
       : '';
 
   return `${pick} is showing live value at ${sportsbook}. Current price: ${
@@ -224,7 +226,7 @@ function normalizeBooks(event: OddsEvent): OddsEvent {
 function eventStartsSoon(
   commenceTime: string,
   minMinutes = 5,
-  maxMinutes = 180
+  maxMinutes = 300
 ): boolean {
   const now = Date.now();
   const start = new Date(commenceTime).getTime();
@@ -282,10 +284,10 @@ function makeCandidates(
 
       const implied = americanToImpliedProb(odds);
 
-      let modelProb = implied + 0.035;
+      let modelProb = implied + 0.045;
 
-      if (odds >= -140 && odds <= 130) modelProb += 0.01;
-      if (Math.abs(odds) >= 180) modelProb -= 0.005;
+      if (odds >= -150 && odds <= 140) modelProb += 0.0125;
+      if (Math.abs(odds) >= 190) modelProb -= 0.005;
 
       modelProb = Math.min(0.8, Math.max(0.2, modelProb));
 
@@ -304,8 +306,8 @@ function makeCandidates(
       const strongerBecauseSteam =
         lineMovement !== null && previousOdds !== null && odds > previousOdds;
 
-      const minEdge = strongerBecauseSteam ? 4.5 : 5.5;
-      const minEv = strongerBecauseSteam ? 4.5 : 6.0;
+      const minEdge = strongerBecauseSteam ? 3.5 : 4.25;
+      const minEv = strongerBecauseSteam ? 3.5 : 4.5;
 
       if (edge < minEdge || ev < minEv) continue;
 
@@ -413,7 +415,7 @@ export async function GET(req: NextRequest) {
     const allEvents = (await fetchAllOdds())
       .map(normalizeBooks)
       .filter((event) => event.bookmakers && event.bookmakers.length > 0)
-      .filter((event) => eventStartsSoon(event.commence_time, 5, 180));
+      .filter((event) => eventStartsSoon(event.commence_time, 5, 300));
 
     let candidates: Candidate[] = [];
 
@@ -459,7 +461,7 @@ export async function GET(req: NextRequest) {
         eventsChecked: allEvents.length,
         candidatesFound: candidates.length,
         finalSelected: finalSelected.length,
-        scanWindowMinutes: 180,
+        scanWindowMinutes: 300,
         mode: 'live',
       },
     });
