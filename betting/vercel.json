@@ -3,15 +3,15 @@
   "crons": [
     {
       "path": "/api/cron/generate-props",
-      "schedule": "0 15 * * *"
+      "schedule": "0 9,13,17 * * *"
     },
     {
       "path": "/api/cron/generate-picks",
-      "schedule": "0 16 * * *"
+      "schedule": "0 8,12,16 * * *"
     },
     {
-      "path": "/api/cron/generate-picks",
-      "schedule": "0 19 * * *"
+      "path": "/api/cron/generate-live-picks",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
