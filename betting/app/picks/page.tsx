@@ -21,6 +21,8 @@ type PickRow = {
   status?: string | null;
 };
 
+const DISPLAY_TIMEZONE = 'America/Phoenix';
+
 function getSupabase() {
   const url =
     process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -36,12 +38,13 @@ function getSupabase() {
   return createClient(url, anon);
 }
 
-function isSameLocalDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+function getDateKeyInTimeZone(date: Date, timeZone: string) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
 }
 
 function formatOdds(odds: number) {
@@ -50,6 +53,11 @@ function formatOdds(odds: number) {
 
 function formatPercent(value?: number | null) {
   if (typeof value !== 'number') return '0%';
+  return `${value}%`;
+}
+
+function formatConfidence(value: string | number) {
+  if (typeof value === 'number') return `${value}%`;
   return `${value}%`;
 }
 
@@ -71,17 +79,20 @@ export default async function PicksPage() {
   const picks = (data ?? []) as PickRow[];
 
   const now = new Date();
+  const todayKey = getDateKeyInTimeZone(now, DISPLAY_TIMEZONE);
+
   const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const tomorrowKey = getDateKeyInTimeZone(tomorrow, DISPLAY_TIMEZONE);
 
   const todaysPicks = picks.filter((pick) => {
     if (!pick.game_date) return false;
-    return isSameLocalDay(new Date(pick.game_date), now);
+    return getDateKeyInTimeZone(new Date(pick.game_date), DISPLAY_TIMEZONE) === todayKey;
   });
 
   const tomorrowsPicks = picks.filter((pick) => {
     if (!pick.game_date) return false;
-    return isSameLocalDay(new Date(pick.game_date), tomorrow);
+    return getDateKeyInTimeZone(new Date(pick.game_date), DISPLAY_TIMEZONE) === tomorrowKey;
   });
 
   return (
@@ -119,7 +130,7 @@ export default async function PicksPage() {
                         <span>{formatOdds(pick.odds)}</span>
                         <span>Edge: {formatPercent(pick.edge)}</span>
                         <span>EV: {formatPercent(pick.ev)}</span>
-                        <span>Confidence: {pick.confidence}%</span>
+                        <span>Confidence: {formatConfidence(pick.confidence)}</span>
                       </div>
 
                       {pick.analysis ? (
@@ -164,7 +175,7 @@ export default async function PicksPage() {
                         <span>{formatOdds(pick.odds)}</span>
                         <span>Edge: {formatPercent(pick.edge)}</span>
                         <span>EV: {formatPercent(pick.ev)}</span>
-                        <span>Confidence: {pick.confidence}%</span>
+                        <span>Confidence: {formatConfidence(pick.confidence)}</span>
                       </div>
 
                       {pick.analysis ? (
