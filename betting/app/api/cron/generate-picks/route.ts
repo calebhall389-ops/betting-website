@@ -36,6 +36,8 @@ type CandidatePick = {
   pick: string;
   team: string;
   odds: number;
+  best_odds: number;
+  implied_odds: number;
   confidence: number;
   impliedProbability: number;
   consensusProbability: number;
@@ -52,12 +54,25 @@ type CandidatePick = {
 };
 
 const MAJOR_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars'];
-
 const ALLOWED_SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
 function americanToImpliedProb(odds: number): number {
   if (odds > 0) return 100 / (odds + 100);
   return Math.abs(odds) / (Math.abs(odds) + 100);
+}
+
+function probabilityToAmerican(prob: number): number {
+  if (prob <= 0 || prob >= 1) return 0;
+
+  if (prob >= 0.5) {
+    return Math.round(-(prob / (1 - prob)) * 100);
+  }
+
+  return Math.round(((1 - prob) / prob) * 100);
+}
+
+function formatAmericanOdds(odds: number): string {
+  return odds > 0 ? `+${odds}` : `${odds}`;
 }
 
 function calcEV(winProb: number, americanOdds: number): number {
@@ -89,8 +104,6 @@ function isEligiblePregameEvent(commenceTime: string): boolean {
 
   if (Number.isNaN(eventDate.getTime())) return false;
 
-  // keep games off the pregame board once they are live
-  // and avoid games about to start in the next 15 minutes
   const pregameBufferMinutes = 15;
   const cutoff = new Date(now.getTime() + pregameBufferMinutes * 60 * 1000);
 
@@ -161,7 +174,8 @@ async function fetchOdds(sport: string): Promise<OddsEvent[]> {
 function makeAnalysis(input: {
   pick: string;
   sportsbook: string;
-  odds: number;
+  bestOdds: number;
+  impliedOdds: number;
   confidence: number;
   impliedProbability: number;
   consensusProbability: number;
@@ -169,15 +183,21 @@ function makeAnalysis(input: {
   ev: number;
   playRating: string;
 }): string {
-  return `${input.pick} at ${input.sportsbook}. Price ${
-    input.odds > 0 ? `+${input.odds}` : input.odds
-  }. Model: ${input.confidence.toFixed(2)}%. Market: ${(
-    input.impliedProbability * 100
-  ).toFixed(2)}%. Consensus: ${(
-    input.consensusProbability * 100
-  ).toFixed(2)}%. Edge: ${input.edge.toFixed(2)}%. EV: ${input.ev.toFixed(
+  return `${input.pick} shows value at ${input.sportsbook}. Best price available is ${formatAmericanOdds(
+    input.bestOdds
+  )}, while the model fair line is ${formatAmericanOdds(
+    input.impliedOdds
+  )}. Model win probability is ${input.confidence.toFixed(
     2
-  )}%. Rating: ${input.playRating}.`;
+  )}%, compared with market implied probability of ${(
+    input.impliedProbability * 100
+  ).toFixed(2)}% and consensus probability of ${(
+    input.consensusProbability * 100
+  ).toFixed(2)}%. Estimated edge is ${input.edge.toFixed(
+    2
+  )}% with projected EV of ${input.ev.toFixed(2)}%. Rating: ${
+    input.playRating
+  }.`;
 }
 
 function getBestBookPriceForTeam(event: OddsEvent, team: string) {
@@ -246,6 +266,7 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
     const ev = calcEV(model, data.best.price);
     const rating = getPlayRating(ev, edge);
     const stake = getStakeUnits(rating);
+    const impliedOdds = probabilityToAmerican(model);
 
     if (edge < 3.5) continue;
     if (ev < 5) continue;
@@ -260,6 +281,8 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
       pick: teamToPickLabel(team),
       team,
       odds: data.best.price,
+      best_odds: data.best.price,
+      implied_odds: impliedOdds,
       confidence: model * 100,
       impliedProbability: implied,
       consensusProbability: consensus,
@@ -270,7 +293,8 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
       analysis: makeAnalysis({
         pick: teamToPickLabel(team),
         sportsbook: data.best.sportsbook,
-        odds: data.best.price,
+        bestOdds: data.best.price,
+        impliedOdds,
         confidence: model * 100,
         impliedProbability: implied,
         consensusProbability: consensus,
@@ -323,6 +347,8 @@ async function insertPicks(final: CandidatePick[]) {
     game: p.game,
     pick: p.pick,
     odds: p.odds,
+    best_odds: p.best_odds,
+    implied_odds: p.implied_odds,
     confidence: Number(p.confidence.toFixed(0)),
     analysis: p.analysis,
     stake: p.stake,
