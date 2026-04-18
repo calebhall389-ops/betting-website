@@ -117,7 +117,9 @@ function getSupabase() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !key) {
-    throw new Error('Missing Supabase env vars');
+    throw new Error(
+      'Missing Supabase env vars: NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY'
+    );
   }
 
   return createClient(url, key);
@@ -125,6 +127,10 @@ function getSupabase() {
 
 async function fetchOdds(sport: string): Promise<OddsEvent[]> {
   const apiKey = process.env.ODDS_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('Missing ODDS_API_KEY');
+  }
 
   const url =
     `https://api.the-odds-api.com/v4/sports/${sport}/odds` +
@@ -137,7 +143,10 @@ async function fetchOdds(sport: string): Promise<OddsEvent[]> {
 
   const res = await fetch(url, { cache: 'no-store' });
 
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Odds API failed for ${sport}: ${text}`);
+  }
 
   return res.json();
 }
@@ -155,26 +164,31 @@ function makeAnalysis(input: {
 }): string {
   return `${input.pick} at ${input.sportsbook}. Price ${
     input.odds > 0 ? `+${input.odds}` : input.odds
-  }. Model: ${input.confidence.toFixed(
-    2
-  )}% vs Market: ${(input.impliedProbability * 100).toFixed(
-    2
-  )}%. Edge: ${input.edge.toFixed(2)}%. EV: ${input.ev.toFixed(
+  }. Model: ${input.confidence.toFixed(2)}%. Market: ${(
+    input.impliedProbability * 100
+  ).toFixed(2)}%. Consensus: ${(
+    input.consensusProbability * 100
+  ).toFixed(2)}%. Edge: ${input.edge.toFixed(2)}%. EV: ${input.ev.toFixed(
     2
   )}%. Rating: ${input.playRating}.`;
 }
 
 function getBestBookPriceForTeam(event: OddsEvent, team: string) {
-  const books = (event.bookmakers || []).filter((b) =>
-    MAJOR_BOOKS.includes(b.key)
+  const books = (event.bookmakers || []).filter((book) =>
+    MAJOR_BOOKS.includes(book.key)
   );
 
-  const prices: any[] = [];
+  const prices: {
+    sportsbook: string;
+    sportsbook_key: string;
+    price: number;
+  }[] = [];
 
   for (const book of books) {
-    const h2h = book.markets?.find((m) => m.key === 'h2h');
+    const h2h = book.markets?.find((market) => market.key === 'h2h');
     const outcome = h2h?.outcomes?.find((o) => o.name === team);
-    if (!outcome) continue;
+
+    if (!outcome || typeof outcome.price !== 'number') continue;
 
     prices.push({
       sportsbook: book.title,
@@ -187,7 +201,7 @@ function getBestBookPriceForTeam(event: OddsEvent, team: string) {
 
   const best = prices.reduce((a, b) => (b.price > a.price ? b : a));
   const consensus =
-    prices.reduce((sum, p) => sum + p.price, 0) / prices.length;
+    prices.reduce((sum, priceObj) => sum + priceObj.price, 0) / prices.length;
 
   return { best, consensus };
 }
@@ -207,9 +221,13 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
 
     let model = consensus;
 
-    if (data.best.price > -200 && data.best.price < 200) model += 0.025;
-    else if (data.best.price < 500) model += 0.015;
-    else model += 0.005;
+    if (data.best.price > -200 && data.best.price < 200) {
+      model += 0.025;
+    } else if (data.best.price < 500) {
+      model += 0.015;
+    } else {
+      model += 0.005;
+    }
 
     if (data.best.price > 500) {
       model = Math.min(model, implied + 0.02);
@@ -222,7 +240,6 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
     const rating = getPlayRating(ev, edge);
     const stake = getStakeUnits(rating);
 
-    // 🔥 tightened filters
     if (edge < 3.5) continue;
     if (ev < 5) continue;
     if (ev > 25) continue;
@@ -244,7 +261,7 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
       sportsbook: data.best.sportsbook,
       sportsbook_key: data.best.sportsbook_key,
       analysis: makeAnalysis({
-        pick: team,
+        pick: teamToPickLabel(team),
         sportsbook: data.best.sportsbook,
         odds: data.best.price,
         confidence: model * 100,
@@ -268,51 +285,138 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
 function dedupeBest(candidates: CandidatePick[]) {
   const map = new Map<string, CandidatePick>();
 
-  for (const c of candidates) {
-    const existing = map.get(c.eventId);
-    if (!existing || c.ev > existing.ev) map.set(c.eventId, c);
+  for (const candidate of candidates) {
+    const existing = map.get(candidate.eventId);
+    if (!existing || candidate.ev > existing.ev) {
+      map.set(candidate.eventId, candidate);
+    }
   }
 
   return Array.from(map.values());
 }
 
-export async function GET(req: NextRequest) {
-  const auth = req.headers.get('x-cron-secret');
-  if (process.env.CRON_SECRET && auth !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  let all: CandidatePick[] = [];
-
-  for (const sport of ALLOWED_SPORTS) {
-    const events = await fetchOdds(sport);
-    for (const e of events) {
-      all.push(...buildCandidatesFromEvent(e));
-    }
-  }
-
-  const final = dedupeBest(all)
-    .sort((a, b) => b.ev - a.ev)
-    .slice(0, 6); // 🔥 tighter board
-
+async function clearPregamePicks() {
   const supabase = getSupabase();
 
-  await supabase.from('picks').delete().eq('mode', 'pregame');
+  const { error } = await supabase
+    .from('picks')
+    .delete()
+    .eq('mode', 'pregame');
 
-  if (!final.length) {
-    return NextResponse.json({ success: true, inserted: 0, picks: [] });
+  if (error) {
+    throw new Error(`Failed deleting old pregame picks: ${error.message}`);
   }
+}
+
+async function insertPicks(final: CandidatePick[]) {
+  const supabase = getSupabase();
+
+  const payload = final.map((p) => ({
+    sport: p.sport,
+    game: p.game,
+    pick: p.pick,
+    odds: p.odds,
+    confidence: Number(p.confidence.toFixed(0)),
+    analysis: p.analysis,
+    stake: p.stake,
+    sportsbook: p.sportsbook,
+    sportsbook_key: p.sportsbook_key,
+    edge: Number(p.edge.toFixed(2)),
+    ev: Number(p.ev.toFixed(2)),
+    play_rating: p.play_rating,
+    status: 'open',
+    mode: 'pregame',
+    market_type: 'h2h',
+    event_id: p.eventId,
+    commence_time: p.commenceTime,
+    result: 'pending',
+  }));
 
   const { data, error } = await supabase
     .from('picks')
-    .insert(final.map((p) => ({ ...p, result: 'pending' })))
+    .insert(payload)
     .select();
 
-  if (error) throw error;
+  if (error) {
+    throw new Error(`Supabase insert failed: ${error.message}`);
+  }
 
-  return NextResponse.json({
-    success: true,
-    inserted: data.length,
-    picks: data,
-  });
+  return data;
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const auth = req.headers.get('x-cron-secret');
+    const cronSecret = process.env.CRON_SECRET;
+
+    if (cronSecret && auth !== cronSecret) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    let all: CandidatePick[] = [];
+    let eventsChecked = 0;
+
+    for (const sport of ALLOWED_SPORTS) {
+      const events = await fetchOdds(sport);
+      eventsChecked += events.length;
+
+      for (const event of events) {
+        all.push(...buildCandidatesFromEvent(event));
+      }
+    }
+
+    const final = dedupeBest(all)
+      .sort((a, b) => b.ev - a.ev)
+      .slice(0, 6);
+
+    await clearPregamePicks();
+
+    if (!final.length) {
+      return NextResponse.json({
+        success: true,
+        inserted: 0,
+        picks: [],
+        debug: {
+          eventsChecked,
+          candidatesFound: all.length,
+          finalSelected: 0,
+          minEdge: 3.5,
+          minEv: 5,
+          maxEv: 25,
+          maxPicks: 6,
+          books: MAJOR_BOOKS,
+          mode: 'pregame',
+        },
+      });
+    }
+
+    const data = await insertPicks(final);
+
+    return NextResponse.json({
+      success: true,
+      inserted: data?.length || 0,
+      picks: data || [],
+      debug: {
+        eventsChecked,
+        candidatesFound: all.length,
+        finalSelected: final.length,
+        minEdge: 3.5,
+        minEv: 5,
+        maxEv: 25,
+        maxPicks: 6,
+        books: MAJOR_BOOKS,
+        mode: 'pregame',
+      },
+    });
+  } catch (error) {
+    console.error('CRON ERROR:', error);
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 }
+    );
+  }
 }
