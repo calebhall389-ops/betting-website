@@ -10,6 +10,8 @@ type Pick = {
   game: string;
   pick: string;
   odds: number;
+  best_odds?: number | null;
+  implied_odds?: number | null;
   confidence: string | number;
   analysis?: string | null;
   sportsbook?: string | null;
@@ -166,9 +168,16 @@ export default async function PicksPage() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="rounded-2xl bg-white/5 p-4">
-                      <div className="text-sm text-gray-400">Odds</div>
+                      <div className="text-sm text-gray-400">Best Odds</div>
                       <div className="mt-1 text-2xl font-semibold">
-                        {formatOdds(pick.odds)}
+                        {formatOdds(pick.best_odds ?? pick.odds)}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl bg-white/5 p-4">
+                      <div className="text-sm text-gray-400">Implied Odds</div>
+                      <div className="mt-1 text-2xl font-semibold">
+                        {formatOdds(pick.implied_odds)}
                       </div>
                     </div>
 
@@ -180,13 +189,6 @@ export default async function PicksPage() {
                     </div>
 
                     <div className="rounded-2xl bg-white/5 p-4">
-                      <div className="text-sm text-gray-400">Sportsbook</div>
-                      <div className="mt-1 text-xl font-semibold">
-                        {pick.sportsbook || '--'}
-                      </div>
-                    </div>
-
-                    <div className="rounded-2xl bg-white/5 p-4">
                       <div className="text-sm text-gray-400">EV / Edge</div>
                       <div className="mt-1 text-xl font-semibold">
                         {formatPercent(pick.ev)} / {formatPercent(pick.edge)}
@@ -194,11 +196,9 @@ export default async function PicksPage() {
                     </div>
 
                     <div className="rounded-2xl bg-white/5 p-4">
-                      <div className="text-sm text-gray-400">Play Rating</div>
-                      <div className="mt-2">
-                        <span className={getBadgeClasses(pick.play_rating)}>
-                          {pick.play_rating || '--'}
-                        </span>
+                      <div className="text-sm text-gray-400">Sportsbook</div>
+                      <div className="mt-1 text-xl font-semibold">
+                        {pick.sportsbook || '--'}
                       </div>
                     </div>
 
@@ -209,6 +209,15 @@ export default async function PicksPage() {
                         {pick.stake !== null && pick.stake !== undefined
                           ? 'u'
                           : ''}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl bg-white/5 p-4 col-span-2">
+                      <div className="text-sm text-gray-400">Play Rating</div>
+                      <div className="mt-2">
+                        <span className={getBadgeClasses(pick.play_rating)}>
+                          {pick.play_rating || '--'}
+                        </span>
                       </div>
                     </div>
                   </div>
