@@ -2,8 +2,6 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-const DISPLAY_TIME_ZONE = 'America/Phoenix';
-
 type Pick = {
   id: string;
   created_at: string;
@@ -86,20 +84,23 @@ function getModeBadgeClasses(mode?: string | null) {
   return 'bg-white/10 text-gray-300';
 }
 
+/**
+ * ✅ FIXED TIME FUNCTION
+ * Uses user's local timezone automatically (NO double conversion)
+ */
 function formatCommenceTime(value?: string | null) {
   if (!value) return null;
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
 
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: DISPLAY_TIME_ZONE,
+  return date.toLocaleString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  }).format(date);
+  });
 }
 
 async function getPicks(): Promise<Pick[]> {
@@ -133,7 +134,9 @@ export default async function PicksPage() {
           </div>
 
           <div>
-            <h1 className="text-4xl font-bold tracking-tight">Pregame Picks</h1>
+            <h1 className="text-4xl font-bold tracking-tight">
+              Pregame Picks
+            </h1>
             <p className="mt-2 text-lg text-gray-400">
               Model-approved pregame bets for upcoming games only.
             </p>
@@ -144,7 +147,7 @@ export default async function PicksPage() {
           <div className="rounded-3xl border border-white/10 bg-white/5 p-10 text-center">
             <h2 className="text-2xl font-semibold">No picks right now</h2>
             <p className="mt-3 text-gray-400">
-              No qualifying pregame picks were found for upcoming games.
+              No qualifying pregame picks were found.
             </p>
           </div>
         ) : (
@@ -155,102 +158,76 @@ export default async function PicksPage() {
               return (
                 <article
                   key={pick.id}
-                  className="rounded-3xl border border-white/10 bg-[#111111] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]"
+                  className="rounded-3xl border border-white/10 bg-[#111111] p-6"
                 >
-                  <div className="mb-5 flex items-start justify-between gap-4">
+                  <div className="mb-5 flex items-start justify-between">
+                    <div className="text-sm text-emerald-400">
+                      {pick.sport}
+                    </div>
+
+                    <span
+                      className={`rounded-full px-3 py-1 text-sm ${getModeBadgeClasses(
+                        pick.mode
+                      )}`}
+                    >
+                      Pregame
+                    </span>
+                  </div>
+
+                  <h2 className="text-xl font-semibold">{pick.game}</h2>
+                  <div className="text-xl font-bold mt-2">{pick.pick}</div>
+
+                  {commence && (
+                    <div className="text-sm text-gray-400 mt-2">
+                      Starts: {commence}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4 mt-4">
                     <div>
-                      <div className="text-sm font-medium text-emerald-400">
-                        {pick.sport || '--'}
+                      <div className="text-sm text-gray-400">Odds</div>
+                      <div className="text-xl">
+                        {formatOdds(pick.odds)}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`rounded-full px-3 py-1 text-sm font-medium ${getModeBadgeClasses(
-                          pick.mode
-                        )}`}
-                      >
-                        {pick.mode === 'pregame' ? 'Pregame' : pick.mode || '--'}
+                    <div>
+                      <div className="text-sm text-gray-400">Confidence</div>
+                      <div className="text-xl">
+                        {formatPercent(pick.confidence, 0)}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm text-gray-400">Sportsbook</div>
+                      <div>{pick.sportsbook}</div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm text-gray-400">EV / Edge</div>
+                      <div>
+                        {formatPercent(pick.ev)} / {formatPercent(pick.edge)}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm text-gray-400">Play Rating</div>
+                      <span className={getBadgeClasses(pick.play_rating)}>
+                        {pick.play_rating}
                       </span>
                     </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div>
-                      <h2 className="text-2xl font-semibold leading-snug">
-                        {pick.game}
-                      </h2>
-                    </div>
 
                     <div>
-                      <div className="text-2xl font-bold">{pick.pick}</div>
+                      <div className="text-sm text-gray-400">Stake</div>
+                      <div>{pick.stake}u</div>
                     </div>
-
-                    {commence ? (
-                      <div className="text-sm text-gray-400">
-                        Starts: {commence} MST
-                      </div>
-                    ) : null}
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="rounded-2xl bg-white/5 p-4">
-                        <div className="text-sm text-gray-400">Odds</div>
-                        <div className="mt-1 text-2xl font-semibold">
-                          {formatOdds(pick.odds)}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-white/5 p-4">
-                        <div className="text-sm text-gray-400">Confidence</div>
-                        <div className="mt-1 text-2xl font-semibold">
-                          {formatPercent(pick.confidence, 0)}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-white/5 p-4">
-                        <div className="text-sm text-gray-400">Sportsbook</div>
-                        <div className="mt-1 text-xl font-semibold">
-                          {pick.sportsbook || '--'}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-white/5 p-4">
-                        <div className="text-sm text-gray-400">EV / Edge</div>
-                        <div className="mt-1 text-xl font-semibold">
-                          {formatPercent(pick.ev)} / {formatPercent(pick.edge)}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-white/5 p-4">
-                        <div className="text-sm text-gray-400">Play Rating</div>
-                        <div className="mt-2">
-                          <span
-                            className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ${getBadgeClasses(
-                              pick.play_rating
-                            )}`}
-                          >
-                            {pick.play_rating || '--'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl bg-white/5 p-4">
-                        <div className="text-sm text-gray-400">Stake</div>
-                        <div className="mt-1 text-xl font-semibold">
-                          {pick.stake ?? '--'}
-                          {pick.stake !== null && pick.stake !== undefined
-                            ? 'u'
-                            : ''}
-                        </div>
-                      </div>
-                    </div>
-
-                    {pick.analysis ? (
-                      <div className="pt-1 text-base leading-8 text-gray-300">
-                        {pick.analysis}
-                      </div>
-                    ) : null}
                   </div>
+
+                  {pick.analysis && (
+                    <p className="mt-4 text-sm text-gray-300">
+                      {pick.analysis}
+                    </p>
+                  )}
                 </article>
               );
             })}
