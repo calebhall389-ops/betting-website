@@ -2,6 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
+const DISPLAY_TIME_ZONE = 'America/Phoenix';
+
 type Pick = {
   id: string;
   created_at: string;
@@ -61,11 +63,11 @@ function formatPercent(value?: number | string | null, digits = 2) {
 
 function getBadgeClasses(playRating?: string | null) {
   switch (playRating) {
-    case 'MAX PLAY':
-      return 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
     case 'A PLAY':
-      return 'bg-blue-500/20 text-blue-300 border border-blue-500/30';
+      return 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
     case 'B PLAY':
+      return 'bg-blue-500/20 text-blue-300 border border-blue-500/30';
+    case 'LEAN':
       return 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30';
     default:
       return 'bg-white/10 text-gray-300 border border-white/10';
@@ -90,23 +92,26 @@ function formatCommenceTime(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
 
-  return date.toLocaleString('en-US', {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: DISPLAY_TIME_ZONE,
     weekday: 'short',
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  });
+  }).format(date);
 }
 
 async function getPicks(): Promise<Pick[]> {
   const supabase = getSupabase();
+  const nowIso = new Date().toISOString();
 
   const { data, error } = await supabase
     .from('picks')
     .select('*')
     .eq('mode', 'pregame')
     .in('status', ['open', 'pending'])
+    .gt('commence_time', nowIso)
     .order('commence_time', { ascending: true });
 
   if (error) {
@@ -130,7 +135,7 @@ export default async function PicksPage() {
           <div>
             <h1 className="text-4xl font-bold tracking-tight">Pregame Picks</h1>
             <p className="mt-2 text-lg text-gray-400">
-              Model-approved pregame bets for today and tomorrow.
+              Model-approved pregame bets for upcoming games only.
             </p>
           </div>
         </div>
@@ -139,7 +144,7 @@ export default async function PicksPage() {
           <div className="rounded-3xl border border-white/10 bg-white/5 p-10 text-center">
             <h2 className="text-2xl font-semibold">No picks right now</h2>
             <p className="mt-3 text-gray-400">
-              No qualifying pregame picks were found for today or tomorrow.
+              No qualifying pregame picks were found for upcoming games.
             </p>
           </div>
         ) : (
@@ -183,7 +188,7 @@ export default async function PicksPage() {
 
                     {commence ? (
                       <div className="text-sm text-gray-400">
-                        Starts: {commence}
+                        Starts: {commence} MST
                       </div>
                     ) : null}
 
