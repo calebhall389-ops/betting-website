@@ -3,16 +3,27 @@
 import { useEffect, useState } from 'react';
 
 type Props = {
-  dateString: string;
+  value: string | null | undefined;
 };
 
-export default function LocalEventTime({ dateString }: Props) {
-  const [formatted, setFormatted] = useState('—');
+export default function LocalGameTime({ value }: Props) {
+  const [time, setTime] = useState<string>('—');
 
   useEffect(() => {
-    const date = new Date(dateString);
+    if (!value) {
+      setTime('—');
+      return;
+    }
 
-    const text = new Intl.DateTimeFormat('en-US', {
+    const date = new Date(value);
+
+    // Handle invalid date
+    if (isNaN(date.getTime())) {
+      setTime('—');
+      return;
+    }
+
+    const formatted = new Intl.DateTimeFormat('en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -20,8 +31,8 @@ export default function LocalEventTime({ dateString }: Props) {
       minute: '2-digit',
     }).format(date);
 
-    setFormatted(text);
-  }, [dateString]);
+    setTime(formatted);
+  }, [value]);
 
-  return <span>{formatted}</span>;
+  return <span>{time}</span>;
 }
