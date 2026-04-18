@@ -1,5 +1,12 @@
-import { Activity, Clock3, TrendingUp, BadgeDollarSign } from 'lucide-react';
+import {
+  Activity,
+  Clock3,
+  TrendingUp,
+  BadgeDollarSign,
+  RefreshCw,
+} from 'lucide-react';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import LiveAutoRefresh from '@/components/live-auto-refresh';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -89,6 +96,16 @@ function formatGameTime(dateString: string | null | undefined) {
   });
 }
 
+function isNewPick(createdAt: string | null | undefined) {
+  if (!createdAt) return false;
+
+  const created = new Date(createdAt).getTime();
+  const now = Date.now();
+  const diffMinutes = (now - created) / 60000;
+
+  return diffMinutes <= 3;
+}
+
 function getTopPickId(picks: LivePick[]) {
   if (!picks.length) return null;
 
@@ -115,6 +132,8 @@ export default async function LivePage() {
 
   return (
     <main className="min-h-screen bg-neutral-950 text-white">
+      <LiveAutoRefresh intervalMs={30000} />
+
       <div className="mx-auto max-w-7xl px-4 py-10">
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div className="flex items-center gap-3">
@@ -140,9 +159,12 @@ export default async function LivePage() {
 
             <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
               <div className="text-xs uppercase tracking-wide text-white/50">
-                Refresh
+                Auto Refresh
               </div>
-              <div className="mt-1 text-lg font-semibold">On page reload</div>
+              <div className="mt-1 flex items-center gap-2 text-lg font-semibold">
+                <RefreshCw size={16} className="text-red-400" />
+                Every 30s
+              </div>
             </div>
           </div>
         </div>
@@ -155,6 +177,7 @@ export default async function LivePage() {
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {picks.map((pick) => {
               const isTopPick = pick.id === topPickId;
+              const isNew = isNewPick(pick.created_at);
 
               return (
                 <div
@@ -175,6 +198,12 @@ export default async function LivePage() {
                         {isTopPick && (
                           <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">
                             Top Live Play
+                          </span>
+                        )}
+
+                        {isNew && (
+                          <span className="rounded-full bg-yellow-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-yellow-300">
+                            NEW
                           </span>
                         )}
                       </div>
