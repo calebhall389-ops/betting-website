@@ -228,10 +228,12 @@ function getOutcomePlayer(outcome: BookmakerMarketOutcome): string | null {
 
 function isInWindow(commenceTime: string): boolean {
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
   const gameTime = new Date(commenceTime);
-  return gameTime >= start && gameTime < end;
+
+  const minTime = new Date(now.getTime() + 5 * 60 * 1000);
+  const end = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+
+  return gameTime >= minTime && gameTime < end;
 }
 
 async function safeReadText(res: Response): Promise<string> {
@@ -520,7 +522,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No qualifying props found for today or tomorrow.',
+        message: 'No qualifying props found for the next 48 hours.',
         debug: {
           eventsChecked: eventsWithOdds.length,
           candidatesFound: candidates.length,
@@ -535,16 +537,8 @@ export async function GET(req: NextRequest) {
     }
 
     const now = new Date();
-    const start = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate()
-    ).toISOString();
-    const end = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() + 2
-    ).toISOString();
+    const start = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+    const end = new Date(now.getTime() + 48 * 60 * 60 * 1000).toISOString();
 
     await supabase
       .from('props')
