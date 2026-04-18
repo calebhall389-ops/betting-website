@@ -173,10 +173,8 @@ function buildAnalysis(input: {
   const side = input.pickType.toUpperCase();
   const oddsText =
     input.bestOdds > 0 ? `+${input.bestOdds}` : `${input.bestOdds}`;
-  const fairOddsText =
-    input.fairOdds > 0 ? `+${input.fairOdds}` : `${input.fairOdds}`;
 
-  return `${input.player} ${side} ${input.line} ${input.market} stands out as a value prop. Best price is ${oddsText} at ${input.bestBook}, compared across ${input.booksCompared} books. Model probability is ${input.modelProbability.toFixed(2)}% versus market implied ${input.impliedProbability.toFixed(2)}%, creating a ${input.edge.toFixed(2)}% edge and ${input.ev.toFixed(2)}% EV. Fair odds project closer to ${input.fairOdds > 0 ? `+${input.fairOdds}` : `${input.fairOdds}`}.`;
+  return `${input.player} ${side} ${input.line} ${input.market}. Model projects ${input.modelProbability.toFixed(1)}% vs market ${input.impliedProbability.toFixed(1)}%. Edge: ${input.edge.toFixed(2)}% | EV: ${input.ev.toFixed(2)}%. Best price ${oddsText} at ${input.bestBook}.`;
 }
 
 function normalizeSportTitle(sportTitle: string): string {
@@ -556,10 +554,12 @@ export async function GET(req: NextRequest) {
       market_key: p.market_key,
       line: p.line,
       pick_type: p.pick_type,
+      recommendation: `${p.player} ${p.pick_type.toUpperCase()} ${p.line} ${p.market}`,
       over_odds: p.over_odds,
       under_odds: p.under_odds,
       best_odds: p.best_odds,
       best_book: p.best_book,
+      best_sportsbook: p.best_book,
       ev: Number(p.ev.toFixed(2)),
       edge: Number(p.edge.toFixed(2)),
       confidence: String(p.confidence),
