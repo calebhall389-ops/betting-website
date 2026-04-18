@@ -554,7 +554,7 @@ export async function GET(req: NextRequest) {
       market_key: p.market_key,
       line: p.line,
       pick_type: p.pick_type,
-      recommendation: `${p.player} ${p.pick_type.toUpperCase()} ${p.line} ${p.market}`,
+      recommendation: p.pick_type,
       over_odds: p.over_odds,
       under_odds: p.under_odds,
       best_odds: p.best_odds,
