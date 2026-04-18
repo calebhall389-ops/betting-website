@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 
 type BookmakerMarketOutcome = {
   name: string;
+  description?: string;
   price: number;
   point?: number;
 };
@@ -94,10 +95,6 @@ const SPORTS = [
   'americanfootball_nfl',
 ] as const;
 
-/**
- * Keep this tighter first.
- * Once this works, you can add more markets back.
- */
 const MARKET_GROUPS = [
   'player_points',
   'player_rebounds',
@@ -209,9 +206,16 @@ function normalizeMarketName(key: string): string {
   }
 }
 
-function parsePlayerName(outcomeName: string, side: 'over' | 'under'): string {
-  if (side === 'over') return outcomeName.replace(/^Over\s+/i, '').trim();
-  return outcomeName.replace(/^Under\s+/i, '').trim();
+function getOutcomeSide(name: string): 'over' | 'under' | null {
+  const normalized = name.trim().toLowerCase();
+  if (normalized === 'over') return 'over';
+  if (normalized === 'under') return 'under';
+  return null;
+}
+
+function getOutcomePlayer(outcome: BookmakerMarketOutcome): string | null {
+  const player = outcome.description?.trim();
+  return player ? player : null;
 }
 
 function isInWindow(commenceTime: string): boolean {
@@ -329,34 +333,24 @@ function buildCandidatesFromEvents(events: OddsEventWithOdds[]): PropCandidate[]
       for (const market of bookmaker.markets || []) {
         const marketName = normalizeMarketName(market.key);
 
-        const overOutcomes = market.outcomes.filter((o) => {
-          return typeof o.point === 'number' && /^over\s+/i.test(o.name);
-        });
+        for (const outcome of market.outcomes || []) {
+          const side = getOutcomeSide(outcome.name);
+          const player = getOutcomePlayer(outcome);
 
-        const underOutcomes = market.outcomes.filter((o) => {
-          return typeof o.point === 'number' && /^under\s+/i.test(o.name);
-        });
+          if (!side || !player) continue;
+          if (typeof outcome.point !== 'number') continue;
+          if (typeof outcome.price !== 'number') continue;
 
-        for (const over of overOutcomes) {
-          const playerName = parsePlayerName(over.name, 'over');
-
-          const matchingUnder = underOutcomes.find((u) => {
-            const underPlayer = parsePlayerName(u.name, 'under');
-            return u.point === over.point && underPlayer === playerName;
-          });
-
-          if (!matchingUnder) continue;
-
-          const key = `${playerName}__${market.key}__${String(over.point)}`;
+          const key = `${player}__${market.key}__${String(outcome.point)}`;
 
           if (!grouped.has(key)) {
             grouped.set(key, {
               sport,
               game,
               event_date: event.commence_time,
-              player: playerName,
+              player,
               market: marketName,
-              line: over.point || 0,
+              line: outcome.point,
               overPrices: [],
               underPrices: [],
             });
@@ -365,15 +359,17 @@ function buildCandidatesFromEvents(events: OddsEventWithOdds[]): PropCandidate[]
           const item = grouped.get(key);
           if (!item) continue;
 
-          item.overPrices.push({
-            price: over.price,
-            book: bookmaker.title,
-          });
-
-          item.underPrices.push({
-            price: matchingUnder.price,
-            book: bookmaker.title,
-          });
+          if (side === 'over') {
+            item.overPrices.push({
+              price: outcome.price,
+              book: bookmaker.title,
+            });
+          } else {
+            item.underPrices.push({
+              price: outcome.price,
+              book: bookmaker.title,
+            });
+          }
         }
       }
     }
@@ -489,7 +485,6 @@ export async function GET(req: NextRequest) {
     }
 
     const supabase = getSupabase();
-
     const { eventsWithOdds, debug: fetchDebug } = await fetchOddsApiProps();
 
     const ratingOrder: Record<'A+' | 'A' | 'B' | 'C', number> = {
