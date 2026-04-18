@@ -30,6 +30,15 @@ type OddsEvent = {
   bookmakers?: OddsBookmaker[];
 };
 
+type SportInfo = {
+  key: string;
+  group: string;
+  title: string;
+  description: string;
+  active: boolean;
+  has_outrights?: boolean;
+};
+
 type SidePriceBucket = {
   prices: number[];
   byBook: {
@@ -79,6 +88,15 @@ const MAJOR_BOOKS = new Set([
   'betrivers',
 ]);
 
+const ALLOWED_LIVE_SPORTS = new Set([
+  'baseball_mlb',
+  'basketball_nba',
+  'icehockey_nhl',
+  'basketball_wnba',
+  'americanfootball_nfl',
+  'americanfootball_ncaaf',
+]);
+
 function getSupabase() {
   const url =
     process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -98,10 +116,7 @@ function getCronSecret() {
 }
 
 function americanToImpliedProbability(odds: number): number {
-  if (odds > 0) {
-    return 100 / (odds + 100);
-  }
-
+  if (odds > 0) return 100 / (odds + 100);
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
@@ -116,10 +131,7 @@ function probabilityToAmerican(probability: number): number {
   return Math.round((100 * (1 - probability)) / probability);
 }
 
-function expectedValuePercent(
-  winProbability: number,
-  americanOdds: number
-): number {
+function expectedValuePercent(winProbability: number, americanOdds: number): number {
   const decimalOdds =
     americanOdds > 0
       ? 1 + americanOdds / 100
@@ -171,24 +183,49 @@ function filterMajorBooks(bookmakers: OddsBookmaker[] = []): OddsBookmaker[] {
   return bookmakers.filter((book) => MAJOR_BOOKS.has(book.key));
 }
 
-async function fetchLiveOdds(): Promise<OddsEvent[]> {
+async function fetchActiveSports(): Promise<string[]> {
   const apiKey = process.env.ODDS_API_KEY;
 
   if (!apiKey) {
     throw new Error('Missing ODDS_API_KEY');
   }
 
-  const sportKeys = [
-    'baseball_mlb',
-    'basketball_nba',
-    'icehockey_nhl',
-    'basketball_wnba',
-  ];
+  const url = new URL('https://api.the-odds-api.com/v4/sports');
+  url.searchParams.set('apiKey', apiKey);
+
+  const res = await fetch(url.toString(), {
+    method: 'GET',
+    cache: 'no-store',
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Odds API sports lookup failed: ${text}`);
+  }
+
+  const sports = (await res.json()) as SportInfo[];
+
+  return sports
+    .filter((sport) => sport.active && ALLOWED_LIVE_SPORTS.has(sport.key))
+    .map((sport) => sport.key);
+}
+
+async function fetchLiveOddsForSports(sportKeys: string[]): Promise<OddsEvent[]> {
+  const apiKey = process.env.ODDS_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('Missing ODDS_API_KEY');
+  }
+
+  if (!sportKeys.length) {
+    return [];
+  }
 
   const requests = sportKeys.map(async (sportKey) => {
-    const url = new URL(
-      `https://api.the-odds-api.com/v4/sports/${sportKey}/odds`
-    );
+    const url = new URL(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds`);
 
     url.searchParams.set('apiKey', apiKey);
     url.searchParams.set('regions', 'us');
@@ -257,12 +294,9 @@ function buildMoneylineCandidates(event: OddsEvent): LiveCandidate[] {
     );
 
     const consensusProbability = median(marketProbabilities);
-    const bestPriceProbability = americanToImpliedProbability(
-      bestPriceEntry.price
-    );
+    const bestPriceProbability = americanToImpliedProbability(bestPriceEntry.price);
 
-    const bestVsConsensusEdge =
-      (consensusProbability - bestPriceProbability) * 100;
+    const bestVsConsensusEdge = (consensusProbability - bestPriceProbability) * 100;
     const booksCountBoost = Math.min(0.01, data.prices.length * 0.0015);
 
     let modelProbability =
@@ -357,7 +391,9 @@ export async function GET(req: NextRequest) {
     }
 
     const supabase = getSupabase();
-    const allEvents = await fetchLiveOdds();
+
+    const activeSportKeys = await fetchActiveSports();
+    const allEvents = await fetchLiveOddsForSports(activeSportKeys);
 
     const liveEvents = allEvents.filter(
       (event) =>
@@ -437,6 +473,7 @@ export async function GET(req: NextRequest) {
         commence_time: pick.commence_time,
       })),
       debug: {
+        activeSportsQueried: activeSportKeys,
         eventsChecked: allEvents.length,
         liveEventsFound: liveEvents.length,
         candidatesFound: rawCandidates.length,
