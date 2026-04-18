@@ -40,6 +40,7 @@ type GroupedProp = {
   event_date: string;
   player: string;
   market: string;
+  market_key: string;
   line: number;
   overPrices: { price: number; book: string }[];
   underPrices: { price: number; book: string }[];
@@ -51,6 +52,7 @@ type PropCandidate = {
   event_date: string;
   player: string;
   market: string;
+  market_key: string;
   line: number;
   pick_type: 'over' | 'under';
   over_odds: number | null;
@@ -174,7 +176,7 @@ function buildAnalysis(input: {
   const fairOddsText =
     input.fairOdds > 0 ? `+${input.fairOdds}` : `${input.fairOdds}`;
 
-  return `${input.player} ${side} ${input.line} ${input.market} stands out as a value prop. Best price is ${oddsText} at ${input.bestBook}, compared across ${input.booksCompared} books. Model probability is ${input.modelProbability.toFixed(2)}% versus market implied ${input.impliedProbability.toFixed(2)}%, creating a ${input.edge.toFixed(2)}% edge and ${input.ev.toFixed(2)}% EV. Fair odds project closer to ${fairOddsText}.`;
+  return `${input.player} ${side} ${input.line} ${input.market} stands out as a value prop. Best price is ${oddsText} at ${input.bestBook}, compared across ${input.booksCompared} books. Model probability is ${input.modelProbability.toFixed(2)}% versus market implied ${input.impliedProbability.toFixed(2)}%, creating a ${input.edge.toFixed(2)}% edge and ${input.ev.toFixed(2)}% EV. Fair odds project closer to ${input.fairOdds > 0 ? `+${input.fairOdds}` : `${input.fairOdds}`}.`;
 }
 
 function normalizeSportTitle(sportTitle: string): string {
@@ -350,6 +352,7 @@ function buildCandidatesFromEvents(events: OddsEventWithOdds[]): PropCandidate[]
               event_date: event.commence_time,
               player,
               market: marketName,
+              market_key: market.key,
               line: outcome.point,
               overPrices: [],
               underPrices: [],
@@ -439,6 +442,7 @@ function buildCandidatesFromEvents(events: OddsEventWithOdds[]): PropCandidate[]
         event_date: item.event_date,
         player: item.player,
         market: item.market,
+        market_key: item.market_key,
         line: item.line,
         pick_type: pickType,
         over_odds: bestOver.price,
@@ -549,6 +553,7 @@ export async function GET(req: NextRequest) {
       game: p.game,
       player: p.player,
       market: p.market,
+      market_key: p.market_key,
       line: p.line,
       pick_type: p.pick_type,
       over_odds: p.over_odds,
@@ -557,7 +562,7 @@ export async function GET(req: NextRequest) {
       best_book: p.best_book,
       ev: Number(p.ev.toFixed(2)),
       edge: Number(p.edge.toFixed(2)),
-      confidence: p.confidence,
+      confidence: String(p.confidence),
       implied_probability: Number(p.implied_probability.toFixed(2)),
       books_compared: p.books_compared,
       analysis: p.analysis,
