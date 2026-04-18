@@ -83,9 +83,16 @@ function getStakeUnits(playRating: string): number {
   return 0;
 }
 
-function sameCalendarWindow(commenceTime: string): boolean {
+function isEligiblePregameEvent(commenceTime: string): boolean {
   const now = new Date();
   const eventDate = new Date(commenceTime);
+
+  if (Number.isNaN(eventDate.getTime())) return false;
+
+  // keep games off the pregame board once they are live
+  // and avoid games about to start in the next 15 minutes
+  const pregameBufferMinutes = 15;
+  const cutoff = new Date(now.getTime() + pregameBufferMinutes * 60 * 1000);
 
   const today = new Date(now);
   today.setHours(0, 0, 0, 0);
@@ -93,7 +100,7 @@ function sameCalendarWindow(commenceTime: string): boolean {
   const dayAfterTomorrow = new Date(today);
   dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
 
-  return eventDate >= today && eventDate < dayAfterTomorrow;
+  return eventDate >= cutoff && eventDate < dayAfterTomorrow;
 }
 
 function buildGameLabel(event: OddsEvent): string {
@@ -207,7 +214,7 @@ function getBestBookPriceForTeam(event: OddsEvent, team: string) {
 }
 
 function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
-  if (!sameCalendarWindow(event.commence_time)) return [];
+  if (!isEligiblePregameEvent(event.commence_time)) return [];
 
   const teams = [event.home_team, event.away_team];
   const results: CandidatePick[] = [];
@@ -386,6 +393,7 @@ export async function GET(req: NextRequest) {
           maxPicks: 6,
           books: MAJOR_BOOKS,
           mode: 'pregame',
+          pregameBufferMinutes: 15,
         },
       });
     }
@@ -406,6 +414,7 @@ export async function GET(req: NextRequest) {
         maxPicks: 6,
         books: MAJOR_BOOKS,
         mode: 'pregame',
+        pregameBufferMinutes: 15,
       },
     });
   } catch (error) {
