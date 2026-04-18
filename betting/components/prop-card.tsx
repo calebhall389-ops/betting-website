@@ -46,8 +46,8 @@ function getEvColor(ev: number) {
 
 function getEdgeColor(edge: number) {
   if (edge >= 2.5) return 'text-emerald-400';
-  if (edge >= 1.5) return 'text-green-400';
-  if (edge >= 1) return 'text-yellow-400';
+  if (edge >= 1.5) return 'text-yellow-400';
+  if (edge >= 1) return 'text-orange-300';
   return 'text-slate-400';
 }
 
@@ -107,7 +107,7 @@ export default function PropCard({ prop }: PropCardProps) {
 
   const cardGlow =
     prop.top_play || prop.play_rating === 'A+'
-      ? 'shadow-[0_0_30px_rgba(16,185,129,0.18)] border-emerald-500/30'
+      ? 'border-emerald-400 shadow-[0_0_40px_rgba(16,185,129,0.35)] bg-emerald-500/5'
       : 'border-slate-800';
 
   return (
@@ -116,7 +116,7 @@ export default function PropCard({ prop }: PropCardProps) {
     >
       {prop.top_play ? (
         <div className="absolute right-4 top-4 rounded-full bg-emerald-400 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-black">
-          Top Play
+          TOP PLAY
         </div>
       ) : null}
 
@@ -124,9 +124,11 @@ export default function PropCard({ prop }: PropCardProps) {
         <span className="rounded-md bg-blue-500/10 px-2.5 py-1 text-xs font-semibold text-blue-300">
           {prop.sport}
         </span>
+
         <span className="rounded-md bg-slate-700/40 px-2.5 py-1 text-xs text-slate-300">
           Pending
         </span>
+
         {prop.play_rating ? (
           <span
             className={`rounded-md px-2.5 py-1 text-xs font-semibold ${getRatingStyles(prop.play_rating)}`}
@@ -139,11 +141,13 @@ export default function PropCard({ prop }: PropCardProps) {
       <div className="mb-1 text-3xl font-bold tracking-tight text-white">
         {prop.player}
       </div>
+
       <div className="mb-4 text-sm text-slate-400">{prop.game}</div>
 
       <div className="mb-4 rounded-2xl border border-slate-700 bg-slate-800/45 p-4">
         <div className="mb-2 flex items-center justify-between">
           <div className="text-sm text-slate-400">{prop.market}</div>
+
           <div
             className={`rounded-lg border px-3 py-1 text-sm font-bold ${sideClass}`}
           >
@@ -153,6 +157,7 @@ export default function PropCard({ prop }: PropCardProps) {
 
         <div className="mb-3 flex items-end justify-between">
           <div className="text-4xl font-extrabold text-white">{prop.line}</div>
+
           <div className="text-right">
             <div className="text-xs uppercase tracking-wide text-slate-500">
               Best Odds
@@ -167,15 +172,20 @@ export default function PropCard({ prop }: PropCardProps) {
           <div className="rounded-xl bg-slate-900/50 px-3 py-2">
             <div className="text-slate-500">Over</div>
             <div
-              className={`font-semibold ${prop.pick_type === 'over' ? 'text-emerald-400' : 'text-slate-300'}`}
+              className={`font-semibold ${
+                prop.pick_type === 'over' ? 'text-emerald-400' : 'text-slate-300'
+              }`}
             >
               {formatOdds(prop.over_odds)}
             </div>
           </div>
+
           <div className="rounded-xl bg-slate-900/50 px-3 py-2">
             <div className="text-slate-500">Under</div>
             <div
-              className={`font-semibold ${prop.pick_type === 'under' ? 'text-emerald-400' : 'text-slate-300'}`}
+              className={`font-semibold ${
+                prop.pick_type === 'under' ? 'text-emerald-400' : 'text-slate-300'
+              }`}
             >
               {formatOdds(prop.under_odds)}
             </div>
@@ -186,36 +196,37 @@ export default function PropCard({ prop }: PropCardProps) {
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <div className="rounded-xl border border-slate-800 bg-[#071126] px-3 py-3">
           <div className="text-xs uppercase tracking-wide text-slate-500">EV</div>
-          <div className={`mt-1 text-lg font-bold ${getEvColor(prop.ev)}`}>
+          <div className={`mt-1 text-2xl font-extrabold ${getEvColor(prop.ev)}`}>
             +{prop.ev.toFixed(2)}%
           </div>
         </div>
 
         <div className="rounded-xl border border-slate-800 bg-[#071126] px-3 py-3">
           <div className="text-xs uppercase tracking-wide text-slate-500">Edge</div>
-          <div className={`mt-1 text-lg font-bold ${getEdgeColor(prop.edge)}`}>
+          <div className={`mt-1 text-xl font-bold ${getEdgeColor(prop.edge)}`}>
             +{prop.edge.toFixed(2)}%
           </div>
         </div>
 
         <div className="rounded-xl border border-slate-800 bg-[#071126] px-3 py-3">
           <div className="text-xs uppercase tracking-wide text-slate-500">Book</div>
-          <div className="mt-1 truncate text-lg font-bold text-white">
+          <div className="mt-1 truncate text-lg font-bold text-emerald-400">
             {prop.best_book}
           </div>
+          <div className="text-xs text-slate-500">Best Available</div>
         </div>
 
         <div className="rounded-xl border border-slate-800 bg-[#071126] px-3 py-3">
           <div className="text-xs uppercase tracking-wide text-slate-500">
             Implied
           </div>
-          <div className="mt-1 text-lg font-bold text-white">
+          <div className="mt-1 text-xl font-bold text-white">
             {implied.toFixed(1)}%
           </div>
         </div>
       </div>
 
-      {tags.length > 0 ? (
+      {(tags.length > 0 || prop.edge > 1.5) ? (
         <div className="mb-4 flex flex-wrap gap-2">
           {tags.map((tag) => (
             <span
@@ -225,17 +236,28 @@ export default function PropCard({ prop }: PropCardProps) {
               {tag}
             </span>
           ))}
+
+          {prop.edge > 1.5 ? (
+            <span className="rounded-full border border-yellow-500/30 bg-yellow-500/10 px-3 py-1 text-xs text-yellow-300">
+              ⚠️ Market Inefficiency
+            </span>
+          ) : null}
         </div>
       ) : null}
 
-      <div className="mb-4 rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-sm leading-6 text-slate-300">
-        {prop.analysis || `${prop.player} ${sideLabel} ${prop.line} ${prop.market} grades as a value prop based on model probability versus market implied odds.`}
+      <div className="mb-4 rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-sm leading-8 text-slate-300">
+        {prop.analysis ||
+          `${prop.player} ${sideLabel} ${prop.line} ${prop.market}. Model edge and current market pricing make this one worth a look.`}
       </div>
 
       <div className="flex items-center justify-between border-t border-slate-800 pt-4">
         <div className="text-sm text-slate-400">
-          Books compared: <span className="font-semibold text-slate-200">{prop.books_compared ?? 0}</span>
+          Books compared:{' '}
+          <span className="font-semibold text-slate-200">
+            {prop.books_compared ?? 0}
+          </span>
         </div>
+
         <div className="text-sm text-slate-500">
           {formatDate(prop.event_date || prop.created_at)}
         </div>
