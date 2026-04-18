@@ -20,14 +20,17 @@ type Bookmaker = {
   markets: BookmakerMarket[];
 };
 
-type OddsEvent = {
+type OddsEventListItem = {
   id: string;
   sport_key: string;
   sport_title: string;
   commence_time: string;
   home_team: string;
   away_team: string;
-  bookmakers: Bookmaker[];
+};
+
+type OddsEventWithOdds = OddsEventListItem & {
+  bookmakers?: Bookmaker[];
 };
 
 type GroupedProp = {
@@ -63,6 +66,17 @@ type PropCandidate = {
   top_play: boolean;
 };
 
+type FetchDebug = {
+  sportsTried: string[];
+  eventListCalls: number;
+  eventListFailures: Array<{ sport: string; status: number; body: string }>;
+  eventsFound: number;
+  oddsCalls: number;
+  oddsFailures: Array<{ sport: string; eventId: string; status: number; body: string }>;
+  oddsResponsesWithBookmakers: number;
+  oddsResponsesWithoutBookmakers: number;
+};
+
 const MAJOR_BOOKS = new Set([
   'draftkings',
   'fanduel',
@@ -76,22 +90,22 @@ const MAJOR_BOOKS = new Set([
 const SPORTS = [
   'baseball_mlb',
   'basketball_nba',
-  'americanfootball_nfl',
   'icehockey_nhl',
-];
+  'americanfootball_nfl',
+] as const;
 
+/**
+ * Keep this tighter first.
+ * Once this works, you can add more markets back.
+ */
 const MARKET_GROUPS = [
-  'batter_strikeouts',
-  'pitcher_strikeouts',
   'player_points',
   'player_rebounds',
   'player_assists',
   'player_threes',
-  'player_pass_tds',
-  'player_pass_yds',
-  'player_rush_yds',
-  'player_rec_yds',
-];
+  'pitcher_strikeouts',
+  'batter_strikeouts',
+] as const;
 
 function getSupabase() {
   const url =
@@ -114,11 +128,7 @@ function americanToImplied(odds: number): number {
 
 function impliedToAmerican(prob: number): number {
   if (prob <= 0 || prob >= 1) return 0;
-
-  if (prob >= 0.5) {
-    return Math.round(-(prob / (1 - prob)) * 100);
-  }
-
+  if (prob >= 0.5) return Math.round(-(prob / (1 - prob)) * 100);
   return Math.round(((1 - prob) / prob) * 100);
 }
 
@@ -194,62 +204,78 @@ function normalizeMarketName(key: string): string {
       return 'Assists';
     case 'player_threes':
       return 'Three-Pointers Made';
-    case 'player_pass_tds':
-      return 'Passing TDs';
-    case 'player_pass_yds':
-      return 'Passing Yards';
-    case 'player_rush_yds':
-      return 'Rushing Yards';
-    case 'player_rec_yds':
-      return 'Receiving Yards';
     default:
       return key.replace(/_/g, ' ');
   }
 }
 
 function parsePlayerName(outcomeName: string, side: 'over' | 'under'): string {
-  if (side === 'over') {
-    return outcomeName.replace(/^Over\s+/i, '').trim();
-  }
-
+  if (side === 'over') return outcomeName.replace(/^Over\s+/i, '').trim();
   return outcomeName.replace(/^Under\s+/i, '').trim();
 }
 
 function isInWindow(commenceTime: string): boolean {
   const now = new Date();
-  const start = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate()
-  );
-  const end = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + 2
-  );
-
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
   const gameTime = new Date(commenceTime);
   return gameTime >= start && gameTime < end;
 }
 
-async function fetchOddsApiProps(): Promise<OddsEvent[]> {
+async function safeReadText(res: Response): Promise<string> {
+  try {
+    return await res.text();
+  } catch {
+    return '';
+  }
+}
+
+async function fetchOddsApiProps(): Promise<{
+  eventsWithOdds: OddsEventWithOdds[];
+  debug: FetchDebug;
+}> {
   const apiKey = process.env.ODDS_API_KEY;
 
   if (!apiKey) {
     throw new Error('Missing ODDS_API_KEY');
   }
 
-  const allEvents: OddsEvent[] = [];
+  const debug: FetchDebug = {
+    sportsTried: [...SPORTS],
+    eventListCalls: 0,
+    eventListFailures: [],
+    eventsFound: 0,
+    oddsCalls: 0,
+    oddsFailures: [],
+    oddsResponsesWithBookmakers: 0,
+    oddsResponsesWithoutBookmakers: 0,
+  };
+
+  const eventsWithOdds: OddsEventWithOdds[] = [];
 
   for (const sport of SPORTS) {
+    debug.eventListCalls += 1;
+
     const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/?apiKey=${apiKey}`;
     const eventsRes = await fetch(eventsUrl, { cache: 'no-store' });
 
-    if (!eventsRes.ok) continue;
+    if (!eventsRes.ok) {
+      debug.eventListFailures.push({
+        sport,
+        status: eventsRes.status,
+        body: (await safeReadText(eventsRes)).slice(0, 400),
+      });
+      continue;
+    }
 
-    const events = (await eventsRes.json()) as Array<{ id: string }>;
+    const events = (await eventsRes.json()) as OddsEventListItem[];
+    debug.eventsFound += events.length;
 
     for (const event of events) {
+      if (!isInWindow(event.commence_time)) continue;
+
+      debug.oddsCalls += 1;
+
       const propsUrl =
         `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds` +
         `?apiKey=${apiKey}` +
@@ -258,20 +284,36 @@ async function fetchOddsApiProps(): Promise<OddsEvent[]> {
         `&oddsFormat=american`;
 
       const propsRes = await fetch(propsUrl, { cache: 'no-store' });
-      if (!propsRes.ok) continue;
 
-      const eventWithOdds = (await propsRes.json()) as OddsEvent;
+      if (!propsRes.ok) {
+        debug.oddsFailures.push({
+          sport,
+          eventId: event.id,
+          status: propsRes.status,
+          body: (await safeReadText(propsRes)).slice(0, 400),
+        });
+        continue;
+      }
 
-      if (eventWithOdds && Array.isArray(eventWithOdds.bookmakers) && eventWithOdds.bookmakers.length > 0) {
-        allEvents.push(eventWithOdds);
+      const eventWithOdds = (await propsRes.json()) as OddsEventWithOdds;
+
+      if (
+        eventWithOdds &&
+        Array.isArray(eventWithOdds.bookmakers) &&
+        eventWithOdds.bookmakers.length > 0
+      ) {
+        debug.oddsResponsesWithBookmakers += 1;
+        eventsWithOdds.push(eventWithOdds);
+      } else {
+        debug.oddsResponsesWithoutBookmakers += 1;
       }
     }
   }
 
-  return allEvents;
+  return { eventsWithOdds, debug };
 }
 
-function buildCandidatesFromEvents(events: OddsEvent[]): PropCandidate[] {
+function buildCandidatesFromEvents(events: OddsEventWithOdds[]): PropCandidate[] {
   const candidates: PropCandidate[] = [];
 
   for (const event of events) {
@@ -279,7 +321,6 @@ function buildCandidatesFromEvents(events: OddsEvent[]): PropCandidate[] {
 
     const game = `${event.away_team} at ${event.home_team}`;
     const sport = normalizeSportTitle(event.sport_title);
-
     const grouped = new Map<string, GroupedProp>();
 
     for (const bookmaker of event.bookmakers || []) {
@@ -289,17 +330,11 @@ function buildCandidatesFromEvents(events: OddsEvent[]): PropCandidate[] {
         const marketName = normalizeMarketName(market.key);
 
         const overOutcomes = market.outcomes.filter((o) => {
-          return (
-            typeof o.point === 'number' &&
-            /^over\s+/i.test(o.name)
-          );
+          return typeof o.point === 'number' && /^over\s+/i.test(o.name);
         });
 
         const underOutcomes = market.outcomes.filter((o) => {
-          return (
-            typeof o.point === 'number' &&
-            /^under\s+/i.test(o.name)
-          );
+          return typeof o.point === 'number' && /^under\s+/i.test(o.name);
         });
 
         for (const over of overOutcomes) {
@@ -444,15 +479,18 @@ function buildCandidatesFromEvents(events: OddsEvent[]): PropCandidate[] {
 
 export async function GET(req: NextRequest) {
   try {
-    const authHeader = req.headers.get('x-cron-secret');
     const cronSecret = process.env.CRON_SECRET;
+    const authHeader = req.headers.get('x-cron-secret');
+    const userAgent = req.headers.get('user-agent') || '';
+    const isVercelCron = userAgent.toLowerCase().includes('vercel');
 
-    if (cronSecret && authHeader !== cronSecret) {
+    if (cronSecret && authHeader !== cronSecret && !isVercelCron) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const supabase = getSupabase();
-    const events = await fetchOddsApiProps();
+
+    const { eventsWithOdds, debug: fetchDebug } = await fetchOddsApiProps();
 
     const ratingOrder: Record<'A+' | 'A' | 'B' | 'C', number> = {
       'A+': 4,
@@ -461,7 +499,7 @@ export async function GET(req: NextRequest) {
       C: 1,
     };
 
-    const candidates = buildCandidatesFromEvents(events)
+    const candidates = buildCandidatesFromEvents(eventsWithOdds)
       .sort((a, b) => {
         const ratingDiff = ratingOrder[b.play_rating] - ratingOrder[a.play_rating];
         if (ratingDiff !== 0) return ratingDiff;
@@ -480,13 +518,14 @@ export async function GET(req: NextRequest) {
         inserted: 0,
         message: 'No qualifying props found for today or tomorrow.',
         debug: {
-          eventsChecked: events.length,
-          candidatesFound: 0,
+          eventsChecked: eventsWithOdds.length,
+          candidatesFound: candidates.length,
           finalSelected: 0,
           minBooks: 2,
           minEdge: 1,
           minEv: 1.5,
           maxPropsPerRun: 18,
+          fetchDebug,
         },
       });
     }
@@ -549,13 +588,14 @@ export async function GET(req: NextRequest) {
       inserted: data?.length || 0,
       props: data || [],
       debug: {
-        eventsChecked: events.length,
+        eventsChecked: eventsWithOdds.length,
         candidatesFound: candidates.length,
         finalSelected: withTopPlays.length,
         minBooks: 2,
         minEdge: 1,
         minEv: 1.5,
         maxPropsPerRun: 18,
+        fetchDebug,
       },
     });
   } catch (error) {
