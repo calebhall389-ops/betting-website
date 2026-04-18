@@ -78,10 +78,18 @@ function buildHref(params: {
 }) {
   const search = new URLSearchParams();
 
-  if (params.sport && params.sport !== 'all') search.set('sport', params.sport);
-  if (params.pick && params.pick !== 'all') search.set('pick', params.pick);
-  if (params.rating && params.rating !== 'all') search.set('rating', params.rating);
-  if (params.sort && params.sort !== 'ev') search.set('sort', params.sort);
+  if (params.sport && params.sport.toLowerCase() !== 'all') {
+    search.set('sport', params.sport);
+  }
+  if (params.pick && params.pick.toLowerCase() !== 'all') {
+    search.set('pick', params.pick);
+  }
+  if (params.rating && params.rating.toLowerCase() !== 'all') {
+    search.set('rating', params.rating);
+  }
+  if (params.sort && params.sort.toLowerCase() !== 'ev') {
+    search.set('sort', params.sort);
+  }
 
   const qs = search.toString();
   return qs ? `/props?${qs}` : '/props';
@@ -121,11 +129,17 @@ export default async function PropsPage({
   if (pick !== 'all') query = query.eq('pick_type', pick);
   if (rating !== 'ALL') query = query.eq('play_rating', rating);
 
-  if (sort === 'edge') query = query.order('edge', { ascending: false });
-  else if (sort === 'odds') query = query.order('best_odds', { ascending: false });
-  else if (sort === 'confidence') query = query.order('confidence', { ascending: false });
-  else if (sort === 'date') query = query.order('event_date', { ascending: true });
-  else query = query.order('ev', { ascending: false });
+  if (sort === 'edge') {
+    query = query.order('edge', { ascending: false });
+  } else if (sort === 'odds') {
+    query = query.order('best_odds', { ascending: false });
+  } else if (sort === 'confidence') {
+    query = query.order('confidence', { ascending: false });
+  } else if (sort === 'date') {
+    query = query.order('event_date', { ascending: true });
+  } else {
+    query = query.order('ev', { ascending: false });
+  }
 
   const { data, error } = await query.limit(60);
 
