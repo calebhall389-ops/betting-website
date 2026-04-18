@@ -1,5 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
-import { Flame, Star, BadgeDollarSign, TrendingUp, ShieldCheck } from 'lucide-react';
+import {
+  Flame,
+  Star,
+  BadgeDollarSign,
+  TrendingUp,
+  ShieldCheck,
+} from 'lucide-react';
+import LocalEventTime from '@/components/local-event-time';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,14 +84,6 @@ function getConfidenceBars(confidence: number): string {
   return '█'.repeat(filled) + '░'.repeat(10 - filled);
 }
 
-function splitGame(game: string): { away: string; home: string } {
-  const [away, home] = game.split(' at ');
-  return {
-    away: away || game,
-    home: home || '',
-  };
-}
-
 function getStatTone(value: number): string {
   if (value >= 4) return 'text-emerald-400';
   if (value >= 2) return 'text-yellow-300';
@@ -92,9 +91,15 @@ function getStatTone(value: number): string {
 }
 
 function getRatingTone(rating?: string | null): string {
-  if (rating === 'A+') return 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30';
-  if (rating === 'A') return 'bg-green-500/15 text-green-300 border-green-400/30';
-  if (rating === 'B') return 'bg-yellow-500/15 text-yellow-300 border-yellow-400/30';
+  if (rating === 'A+') {
+    return 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30';
+  }
+  if (rating === 'A') {
+    return 'bg-green-500/15 text-green-300 border-green-400/30';
+  }
+  if (rating === 'B') {
+    return 'bg-yellow-500/15 text-yellow-300 border-yellow-400/30';
+  }
   return 'bg-slate-500/15 text-slate-300 border-slate-400/30';
 }
 
@@ -102,33 +107,26 @@ function getPickTone(pickType: 'over' | 'under') {
   if (pickType === 'over') {
     return {
       pill: 'bg-emerald-500/15 text-emerald-300 border border-emerald-400/30',
-      activeBox: 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300 shadow-[0_0_24px_rgba(16,185,129,0.12)]',
+      activeBox:
+        'border-emerald-400/40 bg-emerald-500/10 text-emerald-300 shadow-[0_0_24px_rgba(16,185,129,0.12)]',
     };
   }
 
   return {
     pill: 'bg-rose-500/15 text-rose-300 border border-rose-400/30',
-    activeBox: 'border-rose-400/40 bg-rose-500/10 text-rose-300 shadow-[0_0_24px_rgba(244,63,94,0.12)]',
+    activeBox:
+      'border-rose-400/40 bg-rose-500/10 text-rose-300 shadow-[0_0_24px_rgba(244,63,94,0.12)]',
   };
 }
 
-function formatDate(dateString: string): string {
-  const date = new Date(dateString);
+function fairOddsToProbability(fairOdds: number | null | undefined): number | null {
+  if (typeof fairOdds !== 'number') return null;
 
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
+  if (fairOdds > 0) {
+    return (100 / (fairOdds + 100)) * 100;
+  }
 
-function formatTime(dateString: string): string {
-  const date = new Date(dateString);
-
-  return date.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  return (Math.abs(fairOdds) / (Math.abs(fairOdds) + 100)) * 100;
 }
 
 async function getProps(): Promise<PropRow[]> {
@@ -179,6 +177,7 @@ function PropCard({ prop }: { prop: PropRow }) {
   const confidence = formatConfidence(prop.confidence);
   const pickTone = getPickTone(prop.pick_type);
   const fairOdds = typeof prop.fair_odds === 'number' ? prop.fair_odds : null;
+  const projectionProbability = fairOddsToProbability(fairOdds);
 
   return (
     <article className="group relative overflow-hidden rounded-[28px] border border-cyan-400/35 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.12),_rgba(2,6,23,0.96)_35%,_rgba(2,6,23,1)_75%)] p-5 shadow-[0_0_0_1px_rgba(34,211,238,0.06),0_18px_60px_rgba(0,0,0,0.55)] transition duration-300 hover:-translate-y-1 hover:border-cyan-300/50">
@@ -191,9 +190,11 @@ function PropCard({ prop }: { prop: PropRow }) {
           <span className="rounded-lg bg-blue-500/15 px-3 py-1 text-xs font-semibold text-blue-300">
             {prop.sport}
           </span>
+
           <span className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-medium text-slate-300">
-            {prop.result || 'Pending'}
+            {prop.result || 'pending'}
           </span>
+
           {prop.play_rating ? (
             <span
               className={`rounded-lg border px-3 py-1 text-xs font-semibold ${getRatingTone(
@@ -203,6 +204,7 @@ function PropCard({ prop }: { prop: PropRow }) {
               {prop.play_rating}
             </span>
           ) : null}
+
           {prop.top_play ? (
             <span className="ml-auto rounded-full bg-emerald-400 px-4 py-1.5 text-xs font-extrabold tracking-wide text-slate-950">
               TOP PLAY
@@ -210,47 +212,56 @@ function PropCard({ prop }: { prop: PropRow }) {
           ) : null}
         </div>
 
-        <div className="mb-5">
-          <h2 className="text-[2rem] font-extrabold leading-tight text-white">
+        <div className="mb-5 min-w-0">
+          <h2 className="truncate text-[2rem] font-extrabold leading-tight text-white md:text-[2.2rem]">
             {prop.player}
           </h2>
+
           <p className="mt-1 text-lg font-semibold text-slate-200">
             {prop.pick_type.toUpperCase()} {prop.line} {prop.market}
           </p>
+
           <p className="mt-1 text-base text-slate-400">{prop.game}</p>
+
           <p className="mt-1 text-sm text-slate-500">
-            {formatDate(prop.event_date)} • {formatTime(prop.event_date)}
+            <LocalEventTime dateString={prop.event_date} />
           </p>
         </div>
 
         <div className="mb-5 rounded-[24px] border border-cyan-400/15 bg-slate-950/55 p-4">
           <div className="mb-4 flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm text-slate-400">{prop.market}</p>
-              <div className="mt-2 flex items-end gap-4">
+            <div className="min-w-0">
+              <p className="truncate text-sm text-slate-400">{prop.market}</p>
+
+              <div className="mt-2 flex flex-wrap items-end gap-3">
                 <span className="text-5xl font-black leading-none text-white">
                   {prop.line}
                 </span>
-                <span className={`rounded-xl px-4 py-2 text-lg font-extrabold ${pickTone.pill}`}>
+
+                <span
+                  className={`rounded-xl px-4 py-2 text-lg font-extrabold ${pickTone.pill}`}
+                >
                   {prop.pick_type.toUpperCase()}
                 </span>
               </div>
             </div>
 
-            <div className="text-right">
+            <div className="min-w-0 text-right">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                 Best Odds
               </p>
-              <p className="mt-1 text-4xl font-black text-emerald-400">
+
+              <p className="mt-1 text-3xl font-black leading-none break-words text-emerald-400 md:text-4xl">
                 {oddsText(prop.best_odds)}
               </p>
-              <p className="mt-1 text-sm text-slate-400">
+
+              <p className="mt-1 truncate text-sm text-slate-400">
                 {prop.best_sportsbook || '—'}
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div
               className={`rounded-2xl border p-3 ${
                 prop.pick_type === 'over'
@@ -259,7 +270,9 @@ function PropCard({ prop }: { prop: PropRow }) {
               }`}
             >
               <p className="text-sm text-slate-400">Over {prop.line}</p>
-              <p className="mt-1 text-2xl font-bold">{oddsText(prop.over_odds)}</p>
+              <p className="mt-1 text-2xl font-bold break-words">
+                {oddsText(prop.over_odds)}
+              </p>
             </div>
 
             <div
@@ -270,48 +283,60 @@ function PropCard({ prop }: { prop: PropRow }) {
               }`}
             >
               <p className="text-sm text-slate-400">Under {prop.line}</p>
-              <p className="mt-1 text-2xl font-bold">{oddsText(prop.under_odds)}</p>
+              <p className="mt-1 text-2xl font-bold break-words">
+                {oddsText(prop.under_odds)}
+              </p>
             </div>
           </div>
         </div>
 
-        <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-          <div className="rounded-2xl border border-emerald-400/20 bg-slate-950/65 p-3 xl:col-span-2">
-            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">EV</p>
-            <p className="mt-1 text-4xl font-black text-emerald-400">
+        <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+          <div className="min-w-0 rounded-2xl border border-emerald-400/20 bg-slate-950/65 p-4 xl:col-span-1">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">EV</p>
+            <p className="mt-2 text-3xl font-black leading-none break-words text-emerald-400 md:text-4xl">
               {pctText(prop.ev)}
             </p>
-            <p className="mt-1 text-sm text-slate-400">Expected value</p>
+            <p className="mt-2 text-sm text-slate-400">Expected value</p>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/65 p-3">
-            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Edge</p>
-            <p className={`mt-1 text-3xl font-black ${getStatTone(prop.edge)}`}>
+          <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/65 p-4">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Edge</p>
+            <p
+              className={`mt-2 text-3xl font-black leading-none break-words md:text-4xl ${getStatTone(
+                prop.edge
+              )}`}
+            >
               {pctText(prop.edge)}
             </p>
-            <p className="mt-1 text-sm text-slate-400">Model edge</p>
+            <p className="mt-2 text-sm text-slate-400">Model edge</p>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/65 p-3">
-            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Implied</p>
-            <p className="mt-1 text-3xl font-black text-white">
+          <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/65 p-4">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Implied</p>
+            <p className="mt-2 text-3xl font-black leading-none break-words text-white md:text-4xl">
               {plainPct(prop.implied_probability)}
             </p>
-            <p className="mt-1 text-sm text-slate-400">Market probability</p>
+            <p className="mt-2 text-sm leading-5 text-slate-400">
+              Market probability
+            </p>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/65 p-3">
-            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Fair Odds</p>
-            <p className="mt-1 text-3xl font-black text-cyan-300">
+          <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/65 p-4">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Fair Odds</p>
+            <p className="mt-2 text-3xl font-black leading-none break-words text-cyan-300 md:text-4xl">
               {fairOdds !== null ? oddsText(fairOdds) : '—'}
             </p>
-            <p className="mt-1 text-sm text-slate-400">Model price</p>
+            <p className="mt-2 text-sm text-slate-400">Model price</p>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/65 p-3">
-            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Confidence</p>
-            <p className="mt-1 text-3xl font-black text-white">{confidence}%</p>
-            <p className="mt-1 font-mono text-sm tracking-tight text-cyan-300">
+          <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/65 p-4 col-span-2 md:col-span-3 xl:col-span-1">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+              Confidence
+            </p>
+            <p className="mt-2 text-3xl font-black leading-none break-words text-white md:text-4xl">
+              {confidence}%
+            </p>
+            <p className="mt-2 overflow-hidden font-mono text-xs tracking-tight text-cyan-300 md:text-sm">
               {getConfidenceBars(confidence)}
             </p>
           </div>
@@ -346,37 +371,33 @@ function PropCard({ prop }: { prop: PropRow }) {
         </div>
 
         <div className="rounded-2xl border border-slate-800 bg-slate-950/65 p-4">
-          <div className="grid gap-3 md:grid-cols-4">
-            <div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="min-w-0">
               <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Projection</p>
-              <p className="mt-1 text-lg font-bold text-white">
-                {fairOdds !== null && prop.fair_odds
-                  ? plainPct(
-                      prop.fair_odds > 0
-                        ? 100 / (prop.fair_odds + 100) * 100
-                        : Math.abs(prop.fair_odds) / (Math.abs(prop.fair_odds) + 100) * 100
-                    )
-                  : '—'}
+              <p className="mt-1 text-lg font-bold text-white break-words">
+                {projectionProbability !== null ? plainPct(projectionProbability) : '—'}
               </p>
             </div>
 
-            <div>
+            <div className="min-w-0">
               <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Market</p>
-              <p className="mt-1 text-lg font-bold text-white">
+              <p className="mt-1 text-lg font-bold text-white break-words">
                 {plainPct(prop.implied_probability)}
               </p>
             </div>
 
-            <div>
+            <div className="min-w-0">
               <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Best Book</p>
-              <p className="mt-1 text-lg font-bold text-emerald-300">
+              <p className="mt-1 truncate text-lg font-bold text-emerald-300">
                 {prop.best_sportsbook || '—'}
               </p>
             </div>
 
-            <div>
-              <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Books Compared</p>
-              <p className="mt-1 text-lg font-bold text-white">
+            <div className="min-w-0">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                Books Compared
+              </p>
+              <p className="mt-1 text-lg font-bold text-white break-words">
                 {prop.books_compared}
               </p>
             </div>
@@ -399,46 +420,52 @@ function PropCard({ prop }: { prop: PropRow }) {
 export default async function PropsPage() {
   const props = await getProps();
 
+  const avgEv = props.length
+    ? (
+        props.reduce((sum, prop) => sum + (Number(prop.ev) || 0), 0) / props.length
+      ).toFixed(2)
+    : '0.00';
+
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(6,182,212,0.12),_rgba(2,6,23,1)_28%,_rgba(2,6,23,1)_100%)] px-4 py-8 md:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl">
         <div className="mb-8 rounded-[30px] border border-cyan-400/20 bg-slate-950/65 p-6 shadow-[0_0_60px_rgba(34,211,238,0.08)]">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-            <div>
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div className="max-w-3xl">
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-300">
                 SharpEdge Props
               </p>
+
               <h1 className="mt-2 text-4xl font-black tracking-tight text-white md:text-5xl">
                 Best player props today
               </h1>
-              <p className="mt-3 max-w-3xl text-slate-400">
+
+              <p className="mt-3 text-slate-400">
                 Ranked by EV, edge, best available price, and consensus market value across major sportsbooks.
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
                 <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Props</p>
                 <p className="mt-1 text-3xl font-black text-white">{props.length}</p>
               </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+
+              <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
                 <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Top Plays</p>
                 <p className="mt-1 text-3xl font-black text-emerald-400">
                   {props.filter((p) => p.top_play).length}
                 </p>
               </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+
+              <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
                 <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Avg EV</p>
-                <p className="mt-1 text-3xl font-black text-cyan-300">
-                  {props.length
-                    ? `${(
-                        props.reduce((sum, p) => sum + (Number(p.ev) || 0), 0) /
-                        props.length
-                      ).toFixed(2)}%`
-                    : '0.00%'}
+                <p className="mt-1 text-3xl font-black text-cyan-300 break-words">
+                  {avgEv}%
                 </p>
               </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+
+              <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
                 <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Window</p>
                 <p className="mt-1 text-3xl font-black text-white">48h</p>
               </div>
@@ -449,7 +476,7 @@ export default async function PropsPage() {
         {props.length === 0 ? (
           <EmptyState />
         ) : (
-          <div className="grid gap-6 xl:grid-cols-2 2xl:grid-cols-3">
+          <div className="grid gap-6 xl:grid-cols-2">
             {props.map((prop) => (
               <PropCard key={prop.id} prop={prop} />
             ))}
