@@ -39,14 +39,35 @@ type SidePriceBucket = {
   }[];
 };
 
+type LiveCandidate = {
+  sport: string;
+  game: string;
+  pick: string;
+  team: string;
+  odds: number;
+  sportsbook: string;
+  sportsbook_key: string;
+  confidence: number;
+  edge: number;
+  ev: number;
+  fair_odds: number;
+  implied_prob: number;
+  model_prob: number;
+  analysis: string;
+  stake: number;
+  status: string;
+  market_type: string;
+  commence_time: string;
+};
+
 const LIVE_CONFIG = {
-  minBooks: 2,
-  minEdge: 1.0,
-  minEv: 0.5,
-  maxOdds: 300,
-  minOdds: -250,
+  minBooks: 3,
+  minEdge: 1.5,
+  minEv: 1.0,
+  maxOdds: 250,
+  minOdds: -220,
   scanWindowMinutes: 180,
-  maxPicks: 10,
+  maxPicks: 8,
   staleMinutesBuffer: 5,
 };
 
@@ -56,10 +77,7 @@ const MAJOR_BOOKS = new Set([
   'betmgm',
   'caesars',
   'espnbet',
-  'ballybet',
   'betrivers',
-  'fanatics',
-  'hardrockbet',
 ]);
 
 function getSupabase() {
@@ -84,6 +102,7 @@ function americanToImpliedProbability(odds: number): number {
   if (odds > 0) {
     return 100 / (odds + 100);
   }
+
   return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
@@ -107,13 +126,9 @@ function expectedValuePercent(winProbability: number, americanOdds: number): num
   return (winProbability * decimalOdds - 1) * 100;
 }
 
-function average(numbers: number[]): number {
-  if (!numbers.length) return 0;
-  return numbers.reduce((sum, n) => sum + n, 0) / numbers.length;
-}
-
 function median(numbers: number[]): number {
   if (!numbers.length) return 0;
+
   const sorted = [...numbers].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
 
@@ -135,7 +150,7 @@ function isAllowedLiveOdds(odds: number): boolean {
 
 function getStakeUnits(edge: number, ev: number): number {
   if (edge >= 4 && ev >= 5) return 1.5;
-  if (edge >= 2 && ev >= 2) return 1.0;
+  if (edge >= 2.5 && ev >= 2.5) return 1.0;
   return 0.5;
 }
 
@@ -150,12 +165,13 @@ function isLiveWindow(commenceTime: string): boolean {
   return mins >= 0 && mins <= LIVE_CONFIG.scanWindowMinutes;
 }
 
-function filterMajorBooks(bookmakers: OddsBookmaker[] = []) {
+function filterMajorBooks(bookmakers: OddsBookmaker[] = []): OddsBookmaker[] {
   return bookmakers.filter((book) => MAJOR_BOOKS.has(book.key));
 }
 
 async function fetchLiveOdds(): Promise<OddsEvent[]> {
   const apiKey = process.env.ODDS_API_KEY;
+
   if (!apiKey) {
     throw new Error('Missing ODDS_API_KEY');
   }
@@ -197,7 +213,7 @@ async function fetchLiveOdds(): Promise<OddsEvent[]> {
   return results.flat();
 }
 
-function buildMoneylineCandidates(event: OddsEvent) {
+function buildMoneylineCandidates(event: OddsEvent): LiveCandidate[] {
   const sides: Record<string, SidePriceBucket> = {
     [event.home_team]: { prices: [], byBook: [] },
     [event.away_team]: { prices: [], byBook: [] },
@@ -223,26 +239,7 @@ function buildMoneylineCandidates(event: OddsEvent) {
     }
   }
 
-  const candidates: Array<{
-    sport: string;
-    game: string;
-    pick: string;
-    team: string;
-    odds: number;
-    sportsbook: string;
-    sportsbook_key: string;
-    confidence: number;
-    edge: number;
-    ev: number;
-    fair_odds: number;
-    implied_prob: number;
-    model_prob: number;
-    analysis: string;
-    stake: number;
-    status: string;
-    market_type: string;
-    commence_time: string;
-  }> = [];
+  const candidates: LiveCandidate[] = [];
 
   for (const [team, data] of Object.entries(sides)) {
     if (data.prices.length < LIVE_CONFIG.minBooks) continue;
@@ -258,17 +255,15 @@ function buildMoneylineCandidates(event: OddsEvent) {
     const consensusProbability = median(marketProbabilities);
     const bestPriceProbability = americanToImpliedProbability(bestPriceEntry.price);
 
-    let modelProbability = consensusProbability;
-
     const bestVsConsensusEdge = (consensusProbability - bestPriceProbability) * 100;
-    const booksCountBoost = Math.min(0.012, data.prices.length * 0.002);
+    const booksCountBoost = Math.min(0.01, data.prices.length * 0.0015);
 
-    modelProbability =
+    let modelProbability =
       consensusProbability +
-      Math.max(0, bestVsConsensusEdge / 100) * 0.55 +
+      Math.max(0, bestVsConsensusEdge / 100) * 0.45 +
       booksCountBoost;
 
-    modelProbability = Math.min(0.82, Math.max(0.18, modelProbability));
+    modelProbability = Math.min(0.80, Math.max(0.20, modelProbability));
 
     const edge = (modelProbability - bestPriceProbability) * 100;
     const ev = expectedValuePercent(modelProbability, bestPriceEntry.price);
@@ -316,18 +311,28 @@ function buildMoneylineCandidates(event: OddsEvent) {
   return candidates;
 }
 
-function dedupeCandidates<T extends { game: string; pick: string }>(candidates: T[]): T[] {
-  const seen = new Set<string>();
-  const result: T[] = [];
+function dedupeCandidates(candidates: LiveCandidate[]): LiveCandidate[] {
+  const bestByGame = new Map<string, LiveCandidate>();
 
   for (const candidate of candidates) {
-    const key = `${candidate.game}__${candidate.pick}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(candidate);
+    const existing = bestByGame.get(candidate.game);
+
+    if (!existing) {
+      bestByGame.set(candidate.game, candidate);
+      continue;
+    }
+
+    const candidateScore =
+      candidate.ev * 100 + candidate.edge * 10 + candidate.confidence;
+    const existingScore =
+      existing.ev * 100 + existing.edge * 10 + existing.confidence;
+
+    if (candidateScore > existingScore) {
+      bestByGame.set(candidate.game, candidate);
+    }
   }
 
-  return result;
+  return Array.from(bestByGame.values());
 }
 
 async function clearOldLivePicks(supabase: ReturnType<typeof getSupabase>) {
@@ -438,6 +443,7 @@ export async function GET(req: NextRequest) {
         eventsChecked: allEvents.length,
         liveEventsFound: liveEvents.length,
         candidatesFound: rawCandidates.length,
+        afterGameDedupe: deduped.length,
         finalSelected: sorted.length,
         scanWindowMinutes: LIVE_CONFIG.scanWindowMinutes,
         mode: 'live',
@@ -448,6 +454,7 @@ export async function GET(req: NextRequest) {
           minOdds: LIVE_CONFIG.minOdds,
           maxOdds: LIVE_CONFIG.maxOdds,
         },
+        booksUsed: Array.from(MAJOR_BOOKS),
       },
     });
   } catch (error) {
