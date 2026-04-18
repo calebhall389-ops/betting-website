@@ -30,6 +30,17 @@ type OddsEvent = {
   bookmakers: Bookmaker[];
 };
 
+type GroupedProp = {
+  sport: string;
+  game: string;
+  event_date: string;
+  player: string;
+  market: string;
+  line: number;
+  overPrices: { price: number; book: string }[];
+  underPrices: { price: number; book: string }[];
+};
+
 type PropCandidate = {
   sport: string;
   game: string;
@@ -62,6 +73,26 @@ const MAJOR_BOOKS = new Set([
   'fanatics',
 ]);
 
+const SPORTS = [
+  'baseball_mlb',
+  'basketball_nba',
+  'americanfootball_nfl',
+  'icehockey_nhl',
+];
+
+const MARKET_GROUPS = [
+  'batter_strikeouts',
+  'pitcher_strikeouts',
+  'player_points',
+  'player_rebounds',
+  'player_assists',
+  'player_threes',
+  'player_pass_tds',
+  'player_pass_yds',
+  'player_rush_yds',
+  'player_rec_yds',
+];
+
 function getSupabase() {
   const url =
     process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -76,25 +107,40 @@ function getSupabase() {
   return createClient(url, serviceRoleKey);
 }
 
-function americanToImplied(odds: number) {
+function americanToImplied(odds: number): number {
   if (odds > 0) return 100 / (odds + 100);
-  return (-odds) / ((-odds) + 100);
+  return Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
-function impliedToAmerican(prob: number) {
+function impliedToAmerican(prob: number): number {
   if (prob <= 0 || prob >= 1) return 0;
+
   if (prob >= 0.5) {
     return Math.round(-(prob / (1 - prob)) * 100);
   }
+
   return Math.round(((1 - prob) / prob) * 100);
 }
 
-function average(nums: number[]) {
+function average(nums: number[]): number {
   if (!nums.length) return 0;
   return nums.reduce((sum, n) => sum + n, 0) / nums.length;
 }
 
-function getPlayRating(ev: number, edge: number, books: number): 'A+' | 'A' | 'B' | 'C' {
+function payoutMultiplierFromAmerican(odds: number): number {
+  return odds > 0 ? odds / 100 : 100 / Math.abs(odds);
+}
+
+function expectedValuePercent(prob: number, odds: number): number {
+  const winProfit = payoutMultiplierFromAmerican(odds);
+  return ((prob * winProfit) - (1 - prob)) * 100;
+}
+
+function getPlayRating(
+  ev: number,
+  edge: number,
+  books: number
+): 'A+' | 'A' | 'B' | 'C' {
   if (ev >= 5 && edge >= 2 && books >= 3) return 'A+';
   if (ev >= 3.5 && edge >= 1.5 && books >= 3) return 'A';
   if (ev >= 2 && edge >= 1) return 'B';
@@ -114,62 +160,28 @@ function buildAnalysis(input: {
   edge: number;
   ev: number;
   fairOdds: number;
-}) {
+}): string {
   const side = input.pickType.toUpperCase();
-  const oddsText = input.bestOdds > 0 ? `+${input.bestOdds}` : `${input.bestOdds}`;
+  const oddsText =
+    input.bestOdds > 0 ? `+${input.bestOdds}` : `${input.bestOdds}`;
   const fairOddsText =
     input.fairOdds > 0 ? `+${input.fairOdds}` : `${input.fairOdds}`;
 
   return `${input.player} ${side} ${input.line} ${input.market} stands out as a value prop. Best price is ${oddsText} at ${input.bestBook}, compared across ${input.booksCompared} books. Model probability is ${input.modelProbability.toFixed(2)}% versus market implied ${input.impliedProbability.toFixed(2)}%, creating a ${input.edge.toFixed(2)}% edge and ${input.ev.toFixed(2)}% EV. Fair odds project closer to ${fairOddsText}.`;
 }
 
-async function fetchOddsApiProps(): Promise<OddsEvent[]> {
-  const apiKey = process.env.ODDS_API_KEY;
-  if (!apiKey) {
-    throw new Error('Missing ODDS_API_KEY');
-  }
+function normalizeSportTitle(sportTitle: string): string {
+  const title = sportTitle.toLowerCase();
 
-  const sports = ['baseball_mlb', 'basketball_nba', 'americanfootball_nfl', 'icehockey_nhl'];
+  if (title.includes('baseball')) return 'MLB';
+  if (title.includes('basketball')) return 'NBA';
+  if (title.includes('football')) return 'NFL';
+  if (title.includes('hockey')) return 'NHL';
 
-  const marketGroups = [
-    'batter_strikeouts',
-    'pitcher_strikeouts',
-    'player_points',
-    'player_rebounds',
-    'player_assists',
-    'player_threes',
-    'player_pass_tds',
-    'player_pass_yds',
-    'player_rush_yds',
-    'player_rec_yds',
-  ];
-
-  const allEvents: OddsEvent[] = [];
-
-  for (const sport of sports) {
-    const url = `https://api.the-odds-api.com/v4/sports/${sport}/events/?apiKey=${apiKey}`;
-    const eventsRes = await fetch(url, { cache: 'no-store' });
-    if (!eventsRes.ok) continue;
-
-    const events = await eventsRes.json();
-
-    for (const event of events) {
-      const propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${marketGroups.join(',')}&oddsFormat=american`;
-      const propsRes = await fetch(propsUrl, { cache: 'no-store' });
-      if (!propsRes.ok) continue;
-
-      const eventWithOdds = await propsRes.json();
-
-      if (eventWithOdds?.bookmakers?.length) {
-        allEvents.push(eventWithOdds);
-      }
-    }
-  }
-
-  return allEvents;
+  return sportTitle;
 }
 
-function normalizeMarketName(key: string) {
+function normalizeMarketName(key: string): string {
   switch (key) {
     case 'pitcher_strikeouts':
     case 'batter_strikeouts':
@@ -191,45 +203,84 @@ function normalizeMarketName(key: string) {
     case 'player_rec_yds':
       return 'Receiving Yards';
     default:
-      return key.replaceAll('_', ' ');
+      return key.replace(/_/g, ' ');
   }
 }
 
-function isInWindow(commenceTime: string) {
+function parsePlayerName(outcomeName: string, side: 'over' | 'under'): string {
+  if (side === 'over') {
+    return outcomeName.replace(/^Over\s+/i, '').trim();
+  }
+
+  return outcomeName.replace(/^Under\s+/i, '').trim();
+}
+
+function isInWindow(commenceTime: string): boolean {
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
+  const start = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
+  const end = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 2
+  );
 
   const gameTime = new Date(commenceTime);
   return gameTime >= start && gameTime < end;
 }
 
-function buildCandidatesFromEvents(events: OddsEvent[]) {
+async function fetchOddsApiProps(): Promise<OddsEvent[]> {
+  const apiKey = process.env.ODDS_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('Missing ODDS_API_KEY');
+  }
+
+  const allEvents: OddsEvent[] = [];
+
+  for (const sport of SPORTS) {
+    const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/?apiKey=${apiKey}`;
+    const eventsRes = await fetch(eventsUrl, { cache: 'no-store' });
+
+    if (!eventsRes.ok) continue;
+
+    const events = (await eventsRes.json()) as Array<{ id: string }>;
+
+    for (const event of events) {
+      const propsUrl =
+        `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds` +
+        `?apiKey=${apiKey}` +
+        `&regions=us` +
+        `&markets=${MARKET_GROUPS.join(',')}` +
+        `&oddsFormat=american`;
+
+      const propsRes = await fetch(propsUrl, { cache: 'no-store' });
+      if (!propsRes.ok) continue;
+
+      const eventWithOdds = (await propsRes.json()) as OddsEvent;
+
+      if (eventWithOdds && Array.isArray(eventWithOdds.bookmakers) && eventWithOdds.bookmakers.length > 0) {
+        allEvents.push(eventWithOdds);
+      }
+    }
+  }
+
+  return allEvents;
+}
+
+function buildCandidatesFromEvents(events: OddsEvent[]): PropCandidate[] {
   const candidates: PropCandidate[] = [];
 
   for (const event of events) {
     if (!isInWindow(event.commence_time)) continue;
 
     const game = `${event.away_team} at ${event.home_team}`;
-    const sport = event.sport_title
-      .replace('Baseball', 'MLB')
-      .replace('Basketball', 'NBA')
-      .replace('American Football', 'NFL')
-      .replace('Ice Hockey', 'NHL');
+    const sport = normalizeSportTitle(event.sport_title);
 
-    const grouped = new Map<
-      string,
-      {
-        sport: string;
-        game: string;
-        event_date: string;
-        player: string;
-        market: string;
-        line: number;
-        overPrices: { price: number; book: string }[];
-        underPrices: { price: number; book: string }[];
-      }
-    >();
+    const grouped = new Map<string, GroupedProp>();
 
     for (const bookmaker of event.bookmakers || []) {
       if (!MAJOR_BOOKS.has(bookmaker.key)) continue;
@@ -237,28 +288,31 @@ function buildCandidatesFromEvents(events: OddsEvent[]) {
       for (const market of bookmaker.markets || []) {
         const marketName = normalizeMarketName(market.key);
 
-        const overOutcomes = market.outcomes.filter(
-          (o) =>
+        const overOutcomes = market.outcomes.filter((o) => {
+          return (
             typeof o.point === 'number' &&
-            o.name.toLowerCase().includes('over')
-        );
-        const underOutcomes = market.outcomes.filter(
-          (o) =>
+            /^over\s+/i.test(o.name)
+          );
+        });
+
+        const underOutcomes = market.outcomes.filter((o) => {
+          return (
             typeof o.point === 'number' &&
-            o.name.toLowerCase().includes('under')
-        );
+            /^under\s+/i.test(o.name)
+          );
+        });
 
         for (const over of overOutcomes) {
-          const playerName = over.name.replace(/^Over\s+/i, '').trim();
-          const matchingUnder = underOutcomes.find(
-            (u) =>
-              u.point === over.point &&
-              u.name.replace(/^Under\s+/i, '').trim() === playerName
-          );
+          const playerName = parsePlayerName(over.name, 'over');
+
+          const matchingUnder = underOutcomes.find((u) => {
+            const underPlayer = parsePlayerName(u.name, 'under');
+            return u.point === over.point && underPlayer === playerName;
+          });
 
           if (!matchingUnder) continue;
 
-          const key = `${playerName}__${market.key}__${over.point}`;
+          const key = `${playerName}__${market.key}__${String(over.point)}`;
 
           if (!grouped.has(key)) {
             grouped.set(key, {
@@ -273,14 +327,23 @@ function buildCandidatesFromEvents(events: OddsEvent[]) {
             });
           }
 
-          const item = grouped.get(key)!;
-          item.overPrices.push({ price: over.price, book: bookmaker.title });
-          item.underPrices.push({ price: matchingUnder.price, book: bookmaker.title });
+          const item = grouped.get(key);
+          if (!item) continue;
+
+          item.overPrices.push({
+            price: over.price,
+            book: bookmaker.title,
+          });
+
+          item.underPrices.push({
+            price: matchingUnder.price,
+            book: bookmaker.title,
+          });
         }
       }
     }
 
-    for (const item of grouped.values()) {
+    for (const item of Array.from(grouped.values())) {
       if (item.overPrices.length < 2 || item.underPrices.length < 2) continue;
 
       const overImplieds = item.overPrices.map((p) => americanToImplied(p.price));
@@ -298,27 +361,31 @@ function buildCandidatesFromEvents(events: OddsEvent[]) {
       const bestOver = item.overPrices.reduce((best, curr) =>
         curr.price > best.price ? curr : best
       );
+
       const bestUnder = item.underPrices.reduce((best, curr) =>
         curr.price > best.price ? curr : best
       );
 
-      const overBestImplied = americanToImplied(bestOver.price);
-      const underBestImplied = americanToImplied(bestUnder.price);
+      const bestOverImplied = americanToImplied(bestOver.price);
+      const bestUnderImplied = americanToImplied(bestUnder.price);
 
-      const overEdge = (marketOverProb - overBestImplied) * 100;
-      const underEdge = (marketUnderProb - underBestImplied) * 100;
+      const overEdge = (marketOverProb - bestOverImplied) * 100;
+      const underEdge = (marketUnderProb - bestUnderImplied) * 100;
 
-      const overEv = ((marketOverProb * (bestOver.price > 0 ? bestOver.price / 100 : 100 / Math.abs(bestOver.price))) - (1 - marketOverProb)) * 100;
-      const underEv = ((marketUnderProb * (bestUnder.price > 0 ? bestUnder.price / 100 : 100 / Math.abs(bestUnder.price))) - (1 - marketUnderProb)) * 100;
+      const overEv = expectedValuePercent(marketOverProb, bestOver.price);
+      const underEv = expectedValuePercent(marketUnderProb, bestUnder.price);
 
-      const booksCompared = Math.min(item.overPrices.length, item.underPrices.length);
+      const booksCompared = Math.min(
+        item.overPrices.length,
+        item.underPrices.length
+      );
 
-      const pickType: 'over' | 'under' =
-        underEv > overEv ? 'under' : 'over';
+      const pickType: 'over' | 'under' = underEv > overEv ? 'under' : 'over';
 
       const bestOdds = pickType === 'under' ? bestUnder.price : bestOver.price;
       const bestBook = pickType === 'under' ? bestUnder.book : bestOver.book;
-      const modelProbability = pickType === 'under' ? marketUnderProb : marketOverProb;
+      const modelProbability =
+        pickType === 'under' ? marketUnderProb : marketOverProb;
       const impliedProbability = americanToImplied(bestOdds);
       const edge = pickType === 'under' ? underEdge : overEdge;
       const ev = pickType === 'under' ? underEv : overEv;
@@ -385,14 +452,19 @@ export async function GET(req: NextRequest) {
     }
 
     const supabase = getSupabase();
-
     const events = await fetchOddsApiProps();
+
+    const ratingOrder: Record<'A+' | 'A' | 'B' | 'C', number> = {
+      'A+': 4,
+      A: 3,
+      B: 2,
+      C: 1,
+    };
+
     const candidates = buildCandidatesFromEvents(events)
       .sort((a, b) => {
-        if (b.play_rating.localeCompare(a.play_rating) !== 0) {
-          const order = { 'A+': 4, A: 3, B: 2, C: 1 };
-          return order[b.play_rating] - order[a.play_rating];
-        }
+        const ratingDiff = ratingOrder[b.play_rating] - ratingOrder[a.play_rating];
+        if (ratingDiff !== 0) return ratingDiff;
         return b.ev - a.ev;
       })
       .slice(0, 18);
@@ -419,9 +491,17 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const today = new Date();
-    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
-    const end = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2).toISOString();
+    const now = new Date();
+    const start = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    ).toISOString();
+    const end = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 2
+    ).toISOString();
 
     await supabase
       .from('props')
@@ -430,34 +510,34 @@ export async function GET(req: NextRequest) {
       .lt('event_date', end)
       .eq('result', 'pending');
 
+    const rowsToInsert = withTopPlays.map((p) => ({
+      sport: p.sport,
+      game: p.game,
+      player: p.player,
+      market: p.market,
+      line: p.line,
+      pick_type: p.pick_type,
+      over_odds: p.over_odds,
+      under_odds: p.under_odds,
+      best_odds: p.best_odds,
+      best_book: p.best_book,
+      ev: Number(p.ev.toFixed(2)),
+      edge: Number(p.edge.toFixed(2)),
+      confidence: p.confidence,
+      implied_probability: Number(p.implied_probability.toFixed(2)),
+      books_compared: p.books_compared,
+      analysis: p.analysis,
+      play_rating: p.play_rating,
+      top_play: p.top_play,
+      stake: 1,
+      result: 'pending',
+      profit: null,
+      event_date: p.event_date,
+    }));
+
     const { data, error } = await supabase
       .from('props')
-      .insert(
-        withTopPlays.map((p) => ({
-          sport: p.sport,
-          game: p.game,
-          player: p.player,
-          market: p.market,
-          line: p.line,
-          pick_type: p.pick_type,
-          over_odds: p.over_odds,
-          under_odds: p.under_odds,
-          best_odds: p.best_odds,
-          best_book: p.best_book,
-          ev: Number(p.ev.toFixed(2)),
-          edge: Number(p.edge.toFixed(2)),
-          confidence: p.confidence,
-          implied_probability: Number(p.implied_probability.toFixed(2)),
-          books_compared: p.books_compared,
-          analysis: p.analysis,
-          play_rating: p.play_rating,
-          top_play: p.top_play,
-          stake: 1,
-          result: 'pending',
-          profit: null,
-          event_date: p.event_date,
-        }))
-      )
+      .insert(rowsToInsert)
       .select();
 
     if (error) {
