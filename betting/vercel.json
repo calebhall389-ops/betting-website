@@ -11,7 +11,11 @@
     },
     {
       "path": "/api/cron/generate-live-picks",
-      "schedule": "*/15 * * * *"
+      "schedule": "*/2 16-23 * * *"
+    },
+    {
+      "path": "/api/cron/generate-live-picks",
+      "schedule": "*/2 0-5 * * *"
     }
   ]
 }
