@@ -54,6 +54,7 @@ type CandidatePick = {
 };
 
 const MAJOR_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars'];
+
 const ALLOWED_SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
 function americanToImpliedProb(odds: number): number {
@@ -178,26 +179,21 @@ function makeAnalysis(input: {
   impliedOdds: number;
   confidence: number;
   impliedProbability: number;
-  consensusProbability: number;
   edge: number;
   ev: number;
   playRating: string;
 }): string {
-  return `${input.pick} shows value at ${input.sportsbook}. Best price available is ${formatAmericanOdds(
-    input.bestOdds
-  )}, while the model fair line is ${formatAmericanOdds(
-    input.impliedOdds
-  )}. Model win probability is ${input.confidence.toFixed(
-    2
-  )}%, compared with market implied probability of ${(
+  return `${input.pick} at ${input.sportsbook} is priced at ${
+    input.bestOdds > 0 ? `+${input.bestOdds}` : input.bestOdds
+  } versus a model fair line of ${
+    input.impliedOdds > 0 ? `+${input.impliedOdds}` : input.impliedOdds
+  }. Model win probability is ${input.confidence.toFixed(
+    1
+  )}% compared with market implied probability of ${(
     input.impliedProbability * 100
-  ).toFixed(2)}% and consensus probability of ${(
-    input.consensusProbability * 100
-  ).toFixed(2)}%. Estimated edge is ${input.edge.toFixed(
+  ).toFixed(1)}%. Estimated edge is ${input.edge.toFixed(
     2
-  )}% with projected EV of ${input.ev.toFixed(2)}%. Rating: ${
-    input.playRating
-  }.`;
+  )}% with projected EV of ${input.ev.toFixed(2)}%. ${input.playRating}.`;
 }
 
 function getBestBookPriceForTeam(event: OddsEvent, team: string) {
@@ -297,7 +293,6 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
         impliedOdds,
         confidence: model * 100,
         impliedProbability: implied,
-        consensusProbability: consensus,
         edge,
         ev,
         playRating: rating,
