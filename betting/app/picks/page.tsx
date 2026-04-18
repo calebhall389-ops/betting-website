@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import LocalGameTime from '@/components/LocalGameTime';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,13 +63,13 @@ function formatPercent(value?: number | string | null, digits = 2) {
 function getBadgeClasses(playRating?: string | null) {
   switch (playRating) {
     case 'A PLAY':
-      return 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+      return 'inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/20 px-3 py-1 text-sm font-semibold text-emerald-300';
     case 'B PLAY':
-      return 'bg-blue-500/20 text-blue-300 border border-blue-500/30';
+      return 'inline-flex rounded-full border border-blue-500/30 bg-blue-500/20 px-3 py-1 text-sm font-semibold text-blue-300';
     case 'LEAN':
-      return 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30';
+      return 'inline-flex rounded-full border border-yellow-500/30 bg-yellow-500/20 px-3 py-1 text-sm font-semibold text-yellow-300';
     default:
-      return 'bg-white/10 text-gray-300 border border-white/10';
+      return 'inline-flex rounded-full border border-white/10 bg-white/10 px-3 py-1 text-sm font-semibold text-gray-300';
   }
 }
 
@@ -82,25 +83,6 @@ function getModeBadgeClasses(mode?: string | null) {
   }
 
   return 'bg-white/10 text-gray-300';
-}
-
-/**
- * ✅ FIXED TIME FUNCTION
- * Uses user's local timezone automatically (NO double conversion)
- */
-function formatCommenceTime(value?: string | null) {
-  if (!value) return null;
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-
-  return date.toLocaleString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
 }
 
 async function getPicks(): Promise<Pick[]> {
@@ -134,9 +116,7 @@ export default async function PicksPage() {
           </div>
 
           <div>
-            <h1 className="text-4xl font-bold tracking-tight">
-              Pregame Picks
-            </h1>
+            <h1 className="text-4xl font-bold tracking-tight">Pregame Picks</h1>
             <p className="mt-2 text-lg text-gray-400">
               Model-approved pregame bets for upcoming games only.
             </p>
@@ -152,85 +132,95 @@ export default async function PicksPage() {
           </div>
         ) : (
           <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-            {picks.map((pick) => {
-              const commence = formatCommenceTime(pick.commence_time);
-
-              return (
-                <article
-                  key={pick.id}
-                  className="rounded-3xl border border-white/10 bg-[#111111] p-6"
-                >
-                  <div className="mb-5 flex items-start justify-between">
-                    <div className="text-sm text-emerald-400">
-                      {pick.sport}
-                    </div>
-
-                    <span
-                      className={`rounded-full px-3 py-1 text-sm ${getModeBadgeClasses(
-                        pick.mode
-                      )}`}
-                    >
-                      Pregame
-                    </span>
+            {picks.map((pick) => (
+              <article
+                key={pick.id}
+                className="rounded-3xl border border-white/10 bg-[#111111] p-6"
+              >
+                <div className="mb-5 flex items-start justify-between gap-4">
+                  <div className="text-sm font-medium text-emerald-400">
+                    {pick.sport || '--'}
                   </div>
 
-                  <h2 className="text-xl font-semibold">{pick.game}</h2>
-                  <div className="text-xl font-bold mt-2">{pick.pick}</div>
+                  <span
+                    className={`rounded-full px-3 py-1 text-sm font-medium ${getModeBadgeClasses(
+                      pick.mode
+                    )}`}
+                  >
+                    {pick.mode === 'pregame' ? 'Pregame' : pick.mode || '--'}
+                  </span>
+                </div>
 
-                  {commence && (
-                    <div className="text-sm text-gray-400 mt-2">
-                      Starts: {commence}
-                    </div>
-                  )}
+                <div className="space-y-4">
+                  <div>
+                    <h2 className="text-2xl font-semibold leading-snug">
+                      {pick.game}
+                    </h2>
+                  </div>
 
-                  <div className="grid grid-cols-2 gap-4 mt-4">
-                    <div>
+                  <div className="text-2xl font-bold">{pick.pick}</div>
+
+                  <div className="text-sm text-gray-400">
+                    <LocalGameTime value={pick.commence_time} />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="rounded-2xl bg-white/5 p-4">
                       <div className="text-sm text-gray-400">Odds</div>
-                      <div className="text-xl">
+                      <div className="mt-1 text-2xl font-semibold">
                         {formatOdds(pick.odds)}
                       </div>
                     </div>
 
-                    <div>
+                    <div className="rounded-2xl bg-white/5 p-4">
                       <div className="text-sm text-gray-400">Confidence</div>
-                      <div className="text-xl">
+                      <div className="mt-1 text-2xl font-semibold">
                         {formatPercent(pick.confidence, 0)}
                       </div>
                     </div>
 
-                    <div>
+                    <div className="rounded-2xl bg-white/5 p-4">
                       <div className="text-sm text-gray-400">Sportsbook</div>
-                      <div>{pick.sportsbook}</div>
+                      <div className="mt-1 text-xl font-semibold">
+                        {pick.sportsbook || '--'}
+                      </div>
                     </div>
 
-                    <div>
+                    <div className="rounded-2xl bg-white/5 p-4">
                       <div className="text-sm text-gray-400">EV / Edge</div>
-                      <div>
+                      <div className="mt-1 text-xl font-semibold">
                         {formatPercent(pick.ev)} / {formatPercent(pick.edge)}
                       </div>
                     </div>
 
-                    <div>
+                    <div className="rounded-2xl bg-white/5 p-4">
                       <div className="text-sm text-gray-400">Play Rating</div>
-                      <span className={getBadgeClasses(pick.play_rating)}>
-                        {pick.play_rating}
-                      </span>
+                      <div className="mt-2">
+                        <span className={getBadgeClasses(pick.play_rating)}>
+                          {pick.play_rating || '--'}
+                        </span>
+                      </div>
                     </div>
 
-                    <div>
+                    <div className="rounded-2xl bg-white/5 p-4">
                       <div className="text-sm text-gray-400">Stake</div>
-                      <div>{pick.stake}u</div>
+                      <div className="mt-1 text-xl font-semibold">
+                        {pick.stake ?? '--'}
+                        {pick.stake !== null && pick.stake !== undefined
+                          ? 'u'
+                          : ''}
+                      </div>
                     </div>
                   </div>
 
-                  {pick.analysis && (
-                    <p className="mt-4 text-sm text-gray-300">
+                  {pick.analysis ? (
+                    <div className="pt-1 text-base leading-8 text-gray-300">
                       {pick.analysis}
-                    </p>
-                  )}
-                </article>
-              );
-            })}
+                    </div>
+                  ) : null}
+                </div>
+              </article>
+            ))}
           </div>
         )}
       </section>
