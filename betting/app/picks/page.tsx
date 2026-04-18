@@ -1,319 +1,196 @@
-import {
-  Activity,
-  Clock3,
-  TrendingUp,
-  BadgeDollarSign,
-  RefreshCw,
-} from 'lucide-react';
-import { getSupabaseAdmin } from '@/lib/supabase';
-import LiveAutoRefresh from '@/components/live-auto-refresh';
+import { createClient } from '@supabase/supabase-js';
+import LocalGameTime from '@/components/LocalGameTime';
 
 export const dynamic = 'force-dynamic';
-export const revalidate = 0;
 
-type LivePick = {
+type Pick = {
   id: string;
-  created_at: string;
   sport: string;
   game: string;
   pick: string;
   odds: number;
-  confidence?: string | number | null;
+  best_odds?: number | null;
+  implied_odds?: number | null;
+  confidence: string | number;
   analysis?: string | null;
   sportsbook?: string | null;
-  result?: string | null;
   edge?: number | null;
   ev?: number | null;
+  play_rating?: string | null;
   stake?: number | null;
-  market_type?: string | null;
-  status?: string | null;
-  implied_odds?: number | null;
-  fair_odds?: number | null;
-  best_odds?: number | null;
+  mode?: string | null;
   commence_time?: string | null;
 };
 
-async function getLivePicks(): Promise<LivePick[]> {
-  const supabase = getSupabaseAdmin();
+function getSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
 
-  const { data, error } = await supabase
+function formatOdds(odds?: number | null) {
+  if (!odds && odds !== 0) return '--';
+  return odds > 0 ? `+${odds}` : `${odds}`;
+}
+
+function formatPercent(val?: number | string | null, d = 2) {
+  if (!val && val !== 0) return '--';
+  return `${Number(val).toFixed(d)}%`;
+}
+
+function badge(play?: string | null) {
+  switch (play) {
+    case 'A PLAY':
+      return 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25';
+    case 'B PLAY':
+      return 'bg-blue-500/15 text-blue-300 border border-blue-500/25';
+    case 'LEAN':
+      return 'bg-yellow-500/15 text-yellow-300 border border-yellow-500/25';
+    default:
+      return 'bg-white/10 text-gray-300 border border-white/10';
+  }
+}
+
+function valuePts(best?: number | null, implied?: number | null) {
+  if (!best || !implied) return null;
+  return Math.abs(best - implied);
+}
+
+async function getPicks(): Promise<Pick[]> {
+  const supabase = getSupabase();
+  const now = new Date().toISOString();
+
+  const { data } = await supabase
     .from('picks')
     .select('*')
-    .eq('status', 'live')
-    .order('created_at', { ascending: false })
-    .limit(24);
+    .eq('mode', 'pregame')
+    .gt('commence_time', now)
+    .order('commence_time', { ascending: true });
 
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return (data ?? []) as LivePick[];
+  return (data as Pick[]) || [];
 }
 
-function formatOdds(odds: number | null | undefined) {
-  if (odds == null) return '—';
-  if (odds > 0) return `+${odds}`;
-  return `${odds}`;
-}
-
-function formatPercent(value: number | null | undefined) {
-  if (value == null || Number.isNaN(value)) return '—';
-  return `${value.toFixed(2)}%`;
-}
-
-function formatConfidence(value: string | number | null | undefined) {
-  if (value == null || value === '') return '—';
-  return `${value}`;
-}
-
-function formatUpdatedTime(dateString: string | null | undefined) {
-  if (!dateString) return '—';
-
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMinutes = Math.max(0, Math.floor(diffMs / 60000));
-
-  if (diffMinutes < 1) return 'Just now';
-  if (diffMinutes === 1) return '1 min ago';
-  if (diffMinutes < 60) return `${diffMinutes} mins ago`;
-
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours === 1) return '1 hr ago';
-  return `${diffHours} hrs ago`;
-}
-
-function formatGameTime(dateString: string | null | undefined) {
-  if (!dateString) return '—';
-
-  const date = new Date(dateString);
-
-  return date.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-function isNewPick(createdAt: string | null | undefined) {
-  if (!createdAt) return false;
-
-  const created = new Date(createdAt).getTime();
-  const now = Date.now();
-  const diffMinutes = (now - created) / 60000;
-
-  return diffMinutes <= 3;
-}
-
-function getTopPickId(picks: LivePick[]) {
-  if (!picks.length) return null;
-
-  const sorted = [...picks].sort((a, b) => {
-    const aEv = a.ev ?? -999;
-    const bEv = b.ev ?? -999;
-    if (bEv !== aEv) return bEv - aEv;
-
-    const aEdge = a.edge ?? -999;
-    const bEdge = b.edge ?? -999;
-    if (bEdge !== aEdge) return bEdge - aEdge;
-
-    const aConfidence = Number(a.confidence ?? 0);
-    const bConfidence = Number(b.confidence ?? 0);
-    return bConfidence - aConfidence;
-  });
-
-  return sorted[0]?.id ?? null;
-}
-
-export default async function LivePage() {
-  const picks = await getLivePicks();
-  const topPickId = getTopPickId(picks);
+export default async function PicksPage() {
+  const picks = await getPicks();
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-white">
-      <LiveAutoRefresh intervalMs={30000} />
+    <main className="min-h-screen bg-black text-white">
+      <div className="max-w-7xl mx-auto px-6 py-10">
 
-      <div className="mx-auto max-w-7xl px-4 py-10">
-        <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="rounded-2xl bg-red-500/15 p-3 text-red-400">
-              <Activity size={22} />
-            </div>
+        <h1 className="text-4xl font-bold mb-8">Pregame Picks</h1>
 
-            <div>
-              <h1 className="text-3xl font-bold">Live Bets</h1>
-              <p className="text-white/70">
-                Real-time opportunities refreshed from your live board.
-              </p>
-            </div>
-          </div>
+        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
+          {picks.map((p) => {
+            const val = valuePts(p.best_odds, p.implied_odds);
 
-          <div className="flex flex-wrap gap-3">
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-              <div className="text-xs uppercase tracking-wide text-white/50">
-                Active Live Picks
-              </div>
-              <div className="mt-1 text-lg font-semibold">{picks.length}</div>
-            </div>
+            return (
+              <div
+                key={p.id}
+                className="rounded-3xl bg-[#0e0e0f] border border-white/10 p-6 hover:border-white/20 transition"
+              >
 
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-              <div className="text-xs uppercase tracking-wide text-white/50">
-                Auto Refresh
-              </div>
-              <div className="mt-1 flex items-center gap-2 text-lg font-semibold">
-                <RefreshCw size={16} className="text-red-400" />
-                Every 30s
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {picks.length === 0 ? (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white/70">
-            No live picks available right now.
-          </div>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {picks.map((pick) => {
-              const isTopPick = pick.id === topPickId;
-              const isNew = isNewPick(pick.created_at);
-
-              return (
-                <div
-                  key={pick.id}
-                  className={`rounded-2xl border p-5 shadow-lg transition ${
-                    isTopPick
-                      ? 'border-red-500/40 bg-gradient-to-br from-red-500/10 to-white/5'
-                      : 'border-red-500/20 bg-white/5'
-                  }`}
-                >
-                  <div className="mb-4 flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs uppercase tracking-wide text-red-400">
-                          {pick.sport}
-                        </span>
-
-                        {isTopPick && (
-                          <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">
-                            Top Live Play
-                          </span>
-                        )}
-
-                        {isNew && (
-                          <span className="rounded-full bg-yellow-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-yellow-300">
-                            NEW
-                          </span>
-                        )}
-                      </div>
-
-                      <h2 className="mt-1 text-lg font-semibold">{pick.game}</h2>
-
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/55">
-                        <span className="inline-flex items-center gap-1">
-                          <Clock3 size={12} />
-                          Updated {formatUpdatedTime(pick.created_at)}
-                        </span>
-
-                        {pick.commence_time && (
-                          <span>
-                            • Started {formatGameTime(pick.commence_time)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <span className="rounded-full bg-red-500/20 px-3 py-1 text-xs font-semibold text-red-300">
-                      LIVE
-                    </span>
+                {/* TOP BAR */}
+                <div className="flex justify-between items-center mb-4">
+                  <div className="text-emerald-400 text-sm font-semibold">
+                    {p.sport}
                   </div>
 
-                  <div className="mb-4">
-                    <div className="text-xl font-bold">{pick.pick}</div>
-                    <div className="mt-1 text-sm text-white/60">
-                      {pick.market_type
-                        ? `${pick.market_type.charAt(0).toUpperCase()}${pick.market_type.slice(1)} market`
-                        : 'Live market'}
-                    </div>
+                  <div className="text-xs px-3 py-1 rounded-full bg-blue-500/15 text-blue-300">
+                    Pregame
                   </div>
-
-                  <div className="grid grid-cols-2 gap-3 text-sm text-white/80">
-                    <div className="rounded-xl bg-white/5 p-3">
-                      <div className="text-white/50">Best Odds</div>
-                      <div className="mt-1 font-semibold">
-                        {formatOdds(pick.best_odds ?? pick.odds)}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl bg-white/5 p-3">
-                      <div className="text-white/50">Sportsbook</div>
-                      <div className="mt-1 font-semibold">
-                        {pick.sportsbook ?? '—'}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl bg-white/5 p-3">
-                      <div className="text-white/50">Confidence</div>
-                      <div className="mt-1 font-semibold">
-                        {formatConfidence(pick.confidence)}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl bg-white/5 p-3">
-                      <div className="text-white/50">Stake</div>
-                      <div className="mt-1 font-semibold">
-                        {pick.stake != null ? `${pick.stake}u` : '—'}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl bg-white/5 p-3">
-                      <div className="text-white/50">Implied Odds</div>
-                      <div className="mt-1 font-semibold">
-                        {formatPercent(pick.implied_odds)}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl bg-white/5 p-3">
-                      <div className="text-white/50">Fair Odds</div>
-                      <div className="mt-1 font-semibold">
-                        {formatOdds(pick.fair_odds)}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3">
-                      <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-emerald-300">
-                        <TrendingUp size={14} />
-                        Edge
-                      </div>
-                      <div className="mt-1 text-lg font-semibold text-emerald-200">
-                        {formatPercent(pick.edge)}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3">
-                      <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-sky-300">
-                        <BadgeDollarSign size={14} />
-                        EV
-                      </div>
-                      <div className="mt-1 text-lg font-semibold text-sky-200">
-                        {formatPercent(pick.ev)}
-                      </div>
-                    </div>
-                  </div>
-
-                  {pick.analysis && (
-                    <p className="mt-4 text-sm leading-6 text-white/75">
-                      {pick.analysis}
-                    </p>
-                  )}
                 </div>
-              );
-            })}
-          </div>
-        )}
+
+                {/* VALUE TAG */}
+                {val && (
+                  <div className="mb-3 text-xs text-emerald-300 bg-emerald-500/10 px-3 py-1 rounded-full inline-block">
+                    {val} pts value
+                  </div>
+                )}
+
+                {/* GAME */}
+                <div className="text-2xl font-bold leading-tight">
+                  {p.game}
+                </div>
+
+                {/* PICK */}
+                <div className="text-2xl font-semibold mt-2 text-white">
+                  {p.pick}
+                </div>
+
+                {/* TIME */}
+                <div className="text-gray-400 text-sm mt-2">
+                  <LocalGameTime value={p.commence_time} />
+                </div>
+
+                {/* ODDS ROW */}
+                <div className="grid grid-cols-2 gap-4 mt-5">
+                  <div>
+                    <div className="text-gray-400 text-sm">Best Odds</div>
+                    <div className="text-3xl font-bold">
+                      {formatOdds(p.best_odds ?? p.odds)}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-400 text-sm">Fair Line</div>
+                    <div className="text-3xl font-bold text-gray-300">
+                      {formatOdds(p.implied_odds)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* METRICS */}
+                <div className="grid grid-cols-2 gap-4 mt-5 text-sm">
+                  <div>
+                    <div className="text-gray-400">Confidence</div>
+                    <div className="text-xl font-bold">
+                      {formatPercent(p.confidence, 0)}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-400">EV / Edge</div>
+                    <div className="text-xl font-bold">
+                      <span className="text-emerald-400">
+                        {formatPercent(p.ev)}
+                      </span>{' '}
+                      /
+                      <span className="text-blue-400 ml-1">
+                        {formatPercent(p.edge)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-400">Book</div>
+                    <div className="font-semibold">{p.sportsbook}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-400">Stake</div>
+                    <div className="font-semibold">{p.stake}u</div>
+                  </div>
+                </div>
+
+                {/* RATING */}
+                <div className="mt-5">
+                  <span className={`px-3 py-1 text-sm rounded-full ${badge(p.play_rating)}`}>
+                    {p.play_rating}
+                  </span>
+                </div>
+
+                {/* NOTES */}
+                {p.analysis && (
+                  <div className="mt-5 text-sm text-gray-400 leading-6 border-t border-white/10 pt-4">
+                    {p.analysis}
+                  </div>
+                )}
+
+              </div>
+            );
+          })}
+        </div>
       </div>
     </main>
   );
