@@ -59,6 +59,7 @@ type PropCandidate = {
   under_odds: number | null;
   best_odds: number;
   best_book: string;
+  fair_odds: number;
   ev: number;
   edge: number;
   confidence: number;
@@ -163,7 +164,6 @@ function buildAnalysis(input: {
   market: string;
   bestOdds: number;
   bestBook: string;
-  booksCompared: number;
   modelProbability: number;
   impliedProbability: number;
   edge: number;
@@ -173,8 +173,16 @@ function buildAnalysis(input: {
   const side = input.pickType.toUpperCase();
   const oddsText =
     input.bestOdds > 0 ? `+${input.bestOdds}` : `${input.bestOdds}`;
+  const fairOddsText =
+    input.fairOdds > 0 ? `+${input.fairOdds}` : `${input.fairOdds}`;
 
-  return `${input.player} ${side} ${input.line} ${input.market}. Model projects ${input.modelProbability.toFixed(1)}% vs market ${input.impliedProbability.toFixed(1)}%. Edge: ${input.edge.toFixed(2)}% | EV: ${input.ev.toFixed(2)}%. Best price ${oddsText} at ${input.bestBook}.`;
+  return `${input.player} ${side} ${input.line} ${input.market}. Projection ${input.modelProbability.toFixed(
+    1
+  )}% vs market ${input.impliedProbability.toFixed(
+    1
+  )}%. Edge ${input.edge.toFixed(2)}% | EV ${input.ev.toFixed(
+    2
+  )}%. Fair odds ${fairOddsText}. Best price ${oddsText} at ${input.bestBook}.`;
 }
 
 function normalizeSportTitle(sportTitle: string): string {
@@ -413,7 +421,6 @@ function buildCandidatesFromEvents(events: OddsEventWithOdds[]): PropCandidate[]
       );
 
       const pickType: 'over' | 'under' = underEv > overEv ? 'under' : 'over';
-
       const bestOdds = pickType === 'under' ? bestUnder.price : bestOver.price;
       const bestBook = pickType === 'under' ? bestUnder.book : bestOver.book;
       const modelProbability =
@@ -427,8 +434,8 @@ function buildCandidatesFromEvents(events: OddsEventWithOdds[]): PropCandidate[]
       if (ev < 1.5) continue;
 
       const confidence = Math.max(
-        1,
-        Math.min(99, Math.round(50 + edge * 8 + ev * 2))
+        50,
+        Math.min(85, Math.round(50 + edge * 6 + ev * 1.5))
       );
 
       const fairOdds = impliedToAmerican(modelProbability);
@@ -447,6 +454,7 @@ function buildCandidatesFromEvents(events: OddsEventWithOdds[]): PropCandidate[]
         under_odds: bestUnder.price,
         best_odds: bestOdds,
         best_book: bestBook,
+        fair_odds: fairOdds,
         ev,
         edge,
         confidence,
@@ -459,7 +467,6 @@ function buildCandidatesFromEvents(events: OddsEventWithOdds[]): PropCandidate[]
           market: item.market,
           bestOdds,
           bestBook,
-          booksCompared,
           modelProbability: modelProbability * 100,
           impliedProbability: impliedProbability * 100,
           edge,
@@ -543,8 +550,7 @@ export async function GET(req: NextRequest) {
       .from('props')
       .delete()
       .gte('event_date', start)
-      .lt('event_date', end)
-      .eq('result', 'pending');
+      .lt('event_date', end);
 
     const rowsToInsert = withTopPlays.map((p) => ({
       sport: p.sport,
@@ -554,15 +560,15 @@ export async function GET(req: NextRequest) {
       market_key: p.market_key,
       line: p.line,
       pick_type: p.pick_type,
-      recommendation: p.pick_type,
+      recommendation: p.pick_type === 'over' ? 'over' : 'under',
       over_odds: p.over_odds,
       under_odds: p.under_odds,
       best_odds: p.best_odds,
-      best_book: p.best_book,
       best_sportsbook: p.best_book,
+      fair_odds: p.fair_odds,
       ev: Number(p.ev.toFixed(2)),
       edge: Number(p.edge.toFixed(2)),
-      confidence: String(p.confidence),
+      confidence: p.confidence,
       implied_probability: Number(p.implied_probability.toFixed(2)),
       books_compared: p.books_compared,
       analysis: p.analysis,
