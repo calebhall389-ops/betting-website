@@ -1,296 +1,245 @@
-'use client';
+import { createClient } from '@supabase/supabase-js';
+import PropCard from '@/components/prop-card';
 
-import { useEffect, useMemo, useState } from 'react';
-import { cn, formatOdds, getSportColor, getResultBadge, formatDate } from '@/lib/utils';
-import { Star, Filter, TrendingUp, TrendingDown } from 'lucide-react';
+export const dynamic = 'force-dynamic';
 
-type PropRow = {
-  id?: string;
-  sport: string;
-  player: string;
-  game: string;
-  market: string;
-  market_key: string;
-  recommendation: 'over' | 'under';
-  line: number;
-  over_odds: number;
-  under_odds: number;
-  best_sportsbook: string;
-  edge: number;
-  ev: number;
-  confidence: number;
-  analysis: string;
-  event_time: string;
-  game_date: string;
-  result: string;
+type SearchParams = {
+  sport?: string;
+  pick?: string;
+  rating?: string;
+  sort?: string;
 };
 
-type SportFilter = 'All' | 'NFL' | 'NBA' | 'MLB' | 'NHL';
+type PropRow = {
+  id: string;
+  created_at: string;
+  sport: string;
+  game: string;
+  player: string;
+  market: string;
+  line: number;
+  pick_type: 'over' | 'under';
+  over_odds: number | null;
+  under_odds: number | null;
+  best_odds: number;
+  best_book: string;
+  ev: number;
+  edge: number;
+  confidence: number | string;
+  analysis: string | null;
+  play_rating?: string | null;
+  top_play?: boolean | null;
+  books_compared?: number | null;
+  implied_probability?: number | null;
+  event_date?: string | null;
+};
 
-const SPORTS: SportFilter[] = ['All', 'NFL', 'NBA', 'MLB', 'NHL'];
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const anon =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY;
 
-export default function PropsPage() {
-  const [sport, setSport] = useState<SportFilter>('All');
-  const [recFilter, setRecFilter] = useState<'all' | 'over' | 'under'>('all');
-  const [propsData, setPropsData] = useState<PropRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  if (!url || !anon) {
+    throw new Error('Missing Supabase environment variables');
+  }
 
-  useEffect(() => {
-    let active = true;
+  return createClient(url, anon);
+}
 
-    async function loadProps() {
-      try {
-        setLoading(true);
-        setError('');
+function FilterButton({
+  label,
+  href,
+  active,
+}: {
+  label: string;
+  href: string;
+  active: boolean;
+}) {
+  return (
+    <a
+      href={href}
+      className={`rounded-xl border px-4 py-2 text-sm transition ${
+        active
+          ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+          : 'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-slate-600'
+      }`}
+    >
+      {label}
+    </a>
+  );
+}
 
-        const res = await fetch('/api/props', {
-          cache: 'no-store',
-        });
+function buildHref(params: {
+  sport?: string;
+  pick?: string;
+  rating?: string;
+  sort?: string;
+}) {
+  const search = new URLSearchParams();
 
-        const json = await res.json();
+  if (params.sport && params.sport !== 'all') search.set('sport', params.sport);
+  if (params.pick && params.pick !== 'all') search.set('pick', params.pick);
+  if (params.rating && params.rating !== 'all') search.set('rating', params.rating);
+  if (params.sort && params.sort !== 'ev') search.set('sort', params.sort);
 
-        if (!res.ok || !json?.success) {
-          throw new Error(json?.error || 'Failed to load props');
-        }
+  const qs = search.toString();
+  return qs ? `/props?${qs}` : '/props';
+}
 
-        if (active) {
-          setPropsData(Array.isArray(json.props) ? json.props : []);
-        }
-      } catch (err) {
-        if (active) {
-          setError(err instanceof Error ? err.message : 'Failed to load props');
-        }
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
-    }
+function startOfTodayLocal() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+}
 
-    loadProps();
+function endOfTomorrowLocal() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2).toISOString();
+}
 
-    return () => {
-      active = false;
-    };
-  }, []);
+export default async function PropsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<SearchParams>;
+}) {
+  const params = (await searchParams) || {};
 
-  const filtered = useMemo(() => {
-    return propsData.filter((p) => {
-      if (sport !== 'All' && p.sport !== sport) return false;
-      if (recFilter !== 'all' && p.recommendation !== recFilter) return false;
-      return true;
-    });
-  }, [propsData, sport, recFilter]);
+  const sport = (params.sport || 'all').toUpperCase();
+  const pick = (params.pick || 'all').toLowerCase();
+  const rating = (params.rating || 'all').toUpperCase();
+  const sort = (params.sort || 'ev').toLowerCase();
+
+  const supabase = getSupabase();
+
+  let query = supabase
+    .from('props')
+    .select('*')
+    .gte('event_date', startOfTodayLocal())
+    .lt('event_date', endOfTomorrowLocal());
+
+  if (sport !== 'ALL') query = query.eq('sport', sport);
+  if (pick !== 'all') query = query.eq('pick_type', pick);
+  if (rating !== 'ALL') query = query.eq('play_rating', rating);
+
+  if (sort === 'edge') query = query.order('edge', { ascending: false });
+  else if (sort === 'odds') query = query.order('best_odds', { ascending: false });
+  else if (sort === 'confidence') query = query.order('confidence', { ascending: false });
+  else if (sort === 'date') query = query.order('event_date', { ascending: true });
+  else query = query.order('ev', { ascending: false });
+
+  const { data, error } = await query.limit(60);
+
+  if (error) {
+    return (
+      <main className="min-h-screen bg-[#020817] px-6 py-16 text-white">
+        <div className="mx-auto max-w-7xl">
+          <h1 className="mb-4 text-4xl font-bold">Player Props</h1>
+          <p className="text-rose-400">Failed to load props: {error.message}</p>
+        </div>
+      </main>
+    );
+  }
+
+  const props = (data || []) as PropRow[];
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">Player Props</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Real value props from major books, ranked by edge and EV
-        </p>
+    <main className="min-h-screen bg-[#020817] px-6 py-12 text-white">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-10">
+          <h1 className="text-4xl font-bold tracking-tight">Player Props</h1>
+          <p className="mt-2 text-slate-400">
+            Real value props from major books, ranked by edge and EV
+          </p>
+        </div>
+
+        <div className="mb-8 space-y-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm text-slate-400">Sport:</span>
+            {['all', 'NFL', 'NBA', 'MLB', 'NHL'].map((item) => (
+              <FilterButton
+                key={item}
+                label={item.toUpperCase()}
+                href={buildHref({
+                  sport: item,
+                  pick,
+                  rating,
+                  sort,
+                })}
+                active={sport === item.toUpperCase()}
+              />
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm text-slate-400">Pick:</span>
+            {['all', 'over', 'under'].map((item) => (
+              <FilterButton
+                key={item}
+                label={item.charAt(0).toUpperCase() + item.slice(1)}
+                href={buildHref({
+                  sport,
+                  pick: item,
+                  rating,
+                  sort,
+                })}
+                active={pick === item}
+              />
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm text-slate-400">Grade:</span>
+            {['all', 'A+', 'A', 'B', 'C'].map((item) => (
+              <FilterButton
+                key={item}
+                label={item}
+                href={buildHref({
+                  sport,
+                  pick,
+                  rating: item,
+                  sort,
+                })}
+                active={rating === item.toUpperCase()}
+              />
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm text-slate-400">Sort:</span>
+            {[
+              ['ev', 'Highest EV'],
+              ['edge', 'Highest Edge'],
+              ['odds', 'Best Odds'],
+              ['confidence', 'Confidence'],
+              ['date', 'Game Time'],
+            ].map(([value, label]) => (
+              <FilterButton
+                key={value}
+                label={label}
+                href={buildHref({
+                  sport,
+                  pick,
+                  rating,
+                  sort: value,
+                })}
+                active={sort === value}
+              />
+            ))}
+          </div>
+        </div>
+
+        {props.length === 0 ? (
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-8 text-center text-slate-400">
+            No qualifying props found for the selected filters.
+          </div>
+        ) : (
+          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {props.map((prop) => (
+              <PropCard key={prop.id} prop={prop} />
+            ))}
+          </div>
+        )}
       </div>
-
-      <div className="mb-6 flex flex-wrap gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="flex items-center gap-1.5 text-xs text-slate-500">
-            <Filter size={12} /> Sport:
-          </span>
-          {SPORTS.map((s) => (
-            <button
-              key={s}
-              onClick={() => setSport(s)}
-              className={cn(
-                'rounded-lg border px-3 py-1.5 text-xs font-medium transition-all',
-                sport === s
-                  ? 'border-emerald-500/30 bg-emerald-500/20 text-emerald-400'
-                  : 'border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
-              )}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-
-        <div className="ml-0 flex flex-wrap items-center gap-2 md:ml-4">
-          <span className="flex items-center gap-1.5 text-xs text-slate-500">
-            <Filter size={12} /> Pick:
-          </span>
-          {(['all', 'over', 'under'] as const).map((r) => (
-            <button
-              key={r}
-              onClick={() => setRecFilter(r)}
-              className={cn(
-                'rounded-lg border px-3 py-1.5 text-xs font-medium capitalize transition-all',
-                recFilter === r
-                  ? 'border-emerald-500/30 bg-emerald-500/20 text-emerald-400'
-                  : 'border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
-              )}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-16 text-center">
-          <p className="text-sm text-slate-500">Loading props...</p>
-        </div>
-      ) : error ? (
-        <div className="rounded-xl border border-red-900/50 bg-red-950/20 p-16 text-center">
-          <p className="text-sm text-red-300">{error}</p>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-16 text-center">
-          <p className="text-sm text-slate-500">No props match your filters.</p>
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((prop, idx) => {
-            const isOver = prop.recommendation === 'over';
-            const recOdds = isOver ? prop.over_odds : prop.under_odds;
-            const confidenceStars = Array.from(
-              { length: 5 },
-              (_, i) => i < Number(prop.confidence || 0)
-            );
-
-            return (
-              <div
-                key={`${prop.player}-${prop.market_key}-${prop.line}-${idx}`}
-                className="rounded-xl border border-slate-800 bg-slate-900 p-5 transition-all duration-200 hover:border-slate-700 hover:bg-slate-800/50"
-              >
-                <div className="mb-3 flex items-start justify-between">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        'rounded-md border px-2 py-0.5 text-xs font-semibold',
-                        getSportColor(prop.sport)
-                      )}
-                    >
-                      {prop.sport}
-                    </span>
-
-                    <span
-                      className={cn(
-                        'rounded-md border px-2 py-0.5 text-xs font-semibold capitalize',
-                        getResultBadge(prop.result)
-                      )}
-                    >
-                      {prop.result}
-                    </span>
-                  </div>
-
-                  <div
-                    className={cn(
-                      'flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-bold',
-                      isOver
-                        ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-400'
-                        : 'border-red-500/30 bg-red-500/15 text-red-400'
-                    )}
-                  >
-                    {isOver ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
-                    {prop.recommendation.toUpperCase()}
-                  </div>
-                </div>
-
-                <div className="mb-3">
-                  <h3 className="text-base font-bold text-white">{prop.player}</h3>
-                  <p className="text-xs text-slate-500">{prop.game}</p>
-                </div>
-
-                <div className="mb-4 rounded-lg border border-slate-700/50 bg-slate-800/60 p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-400">{prop.market}</span>
-                    <span className="text-lg font-black text-white">{prop.line}</span>
-                  </div>
-
-                  <div className="mt-2 flex justify-between text-xs">
-                    <span
-                      className={cn(
-                        'font-semibold',
-                        isOver ? 'text-emerald-400' : 'text-slate-400'
-                      )}
-                    >
-                      Over {formatOdds(prop.over_odds)}
-                    </span>
-
-                    <span
-                      className={cn(
-                        'font-semibold',
-                        !isOver ? 'text-emerald-400' : 'text-slate-400'
-                      )}
-                    >
-                      Under {formatOdds(prop.under_odds)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mb-4 grid grid-cols-3 gap-2 text-center text-xs">
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2">
-                    <div className="text-slate-500">EV</div>
-                    <div className="mt-1 font-semibold text-emerald-400">
-                      {prop.ev > 0 ? '+' : ''}
-                      {prop.ev.toFixed(2)}%
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2">
-                    <div className="text-slate-500">Edge</div>
-                    <div className="mt-1 font-semibold text-white">
-                      {prop.edge > 0 ? '+' : ''}
-                      {prop.edge.toFixed(2)}%
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2">
-                    <div className="text-slate-500">Book</div>
-                    <div className="mt-1 truncate font-semibold text-white">
-                      {prop.best_sportsbook}
-                    </div>
-                  </div>
-                </div>
-
-                {prop.analysis ? (
-                  <p className="mb-4 line-clamp-4 text-xs leading-5 text-slate-400">
-                    {prop.analysis}
-                  </p>
-                ) : null}
-
-                <div className="flex items-center justify-between border-t border-slate-800 pt-3 text-xs text-slate-500">
-                  <div className="flex items-center gap-1">
-                    {confidenceStars.map((filled, i) => (
-                      <Star
-                        key={i}
-                        size={11}
-                        className={
-                          filled
-                            ? 'fill-amber-400 text-amber-400'
-                            : 'fill-slate-700 text-slate-700'
-                        }
-                      />
-                    ))}
-                    <span className="ml-1">{prop.confidence}/5</span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        'text-sm font-semibold',
-                        recOdds > 0 ? 'text-emerald-400' : 'text-slate-300'
-                      )}
-                    >
-                      {formatOdds(recOdds)}
-                    </span>
-                    <span>{formatDate(prop.game_date)}</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+    </main>
   );
 }
