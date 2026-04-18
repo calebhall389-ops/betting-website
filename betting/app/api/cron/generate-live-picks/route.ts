@@ -64,11 +64,10 @@ const LIVE_CONFIG = {
   minBooks: 3,
   minEdge: 1.5,
   minEv: 1.0,
-  maxOdds: 250,
+  maxOdds: 225,
   minOdds: -220,
   scanWindowMinutes: 180,
   maxPicks: 8,
-  staleMinutesBuffer: 5,
 };
 
 const MAJOR_BOOKS = new Set([
@@ -117,7 +116,10 @@ function probabilityToAmerican(probability: number): number {
   return Math.round((100 * (1 - probability)) / probability);
 }
 
-function expectedValuePercent(winProbability: number, americanOdds: number): number {
+function expectedValuePercent(
+  winProbability: number,
+  americanOdds: number
+): number {
   const decimalOdds =
     americanOdds > 0
       ? 1 + americanOdds / 100
@@ -184,7 +186,9 @@ async function fetchLiveOdds(): Promise<OddsEvent[]> {
   ];
 
   const requests = sportKeys.map(async (sportKey) => {
-    const url = new URL(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds`);
+    const url = new URL(
+      `https://api.the-odds-api.com/v4/sports/${sportKey}/odds`
+    );
 
     url.searchParams.set('apiKey', apiKey);
     url.searchParams.set('regions', 'us');
@@ -253,9 +257,12 @@ function buildMoneylineCandidates(event: OddsEvent): LiveCandidate[] {
     );
 
     const consensusProbability = median(marketProbabilities);
-    const bestPriceProbability = americanToImpliedProbability(bestPriceEntry.price);
+    const bestPriceProbability = americanToImpliedProbability(
+      bestPriceEntry.price
+    );
 
-    const bestVsConsensusEdge = (consensusProbability - bestPriceProbability) * 100;
+    const bestVsConsensusEdge =
+      (consensusProbability - bestPriceProbability) * 100;
     const booksCountBoost = Math.min(0.01, data.prices.length * 0.0015);
 
     let modelProbability =
@@ -263,7 +270,7 @@ function buildMoneylineCandidates(event: OddsEvent): LiveCandidate[] {
       Math.max(0, bestVsConsensusEdge / 100) * 0.45 +
       booksCountBoost;
 
-    modelProbability = Math.min(0.80, Math.max(0.20, modelProbability));
+    modelProbability = Math.min(0.8, Math.max(0.2, modelProbability));
 
     const edge = (modelProbability - bestPriceProbability) * 100;
     const ev = expectedValuePercent(modelProbability, bestPriceEntry.price);
@@ -335,18 +342,6 @@ function dedupeCandidates(candidates: LiveCandidate[]): LiveCandidate[] {
   return Array.from(bestByGame.values());
 }
 
-async function clearOldLivePicks(supabase: ReturnType<typeof getSupabase>) {
-  const staleBefore = new Date(
-    Date.now() - LIVE_CONFIG.staleMinutesBuffer * 60 * 1000
-  ).toISOString();
-
-  await supabase
-    .from('picks')
-    .delete()
-    .eq('status', 'live')
-    .lt('created_at', staleBefore);
-}
-
 export async function GET(req: NextRequest) {
   try {
     const cronSecret = getCronSecret();
@@ -362,7 +357,6 @@ export async function GET(req: NextRequest) {
     }
 
     const supabase = getSupabase();
-
     const allEvents = await fetchLiveOdds();
 
     const liveEvents = allEvents.filter(
@@ -372,7 +366,10 @@ export async function GET(req: NextRequest) {
         event.bookmakers.length > 0
     );
 
-    const rawCandidates = liveEvents.flatMap((event) => buildMoneylineCandidates(event));
+    const rawCandidates = liveEvents.flatMap((event) =>
+      buildMoneylineCandidates(event)
+    );
+
     const deduped = dedupeCandidates(rawCandidates);
 
     const sorted = deduped
@@ -383,7 +380,7 @@ export async function GET(req: NextRequest) {
       })
       .slice(0, LIVE_CONFIG.maxPicks);
 
-    await clearOldLivePicks(supabase);
+    await supabase.from('picks').delete().eq('status', 'live');
 
     let insertedRows: unknown[] = [];
 
