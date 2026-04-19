@@ -61,7 +61,7 @@ const MAJOR_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars'];
 const ALLOWED_SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
 const MAX_PICKS = 5;
-const MAX_PICKS_PER_GAME = 2;
+const MAX_PICKS_PER_GAME = 1;
 const PREGAME_BUFFER_MINUTES = 15;
 const MAX_EV = 22;
 
@@ -98,9 +98,9 @@ function calcEV(winProb: number, americanOdds: number): number {
 }
 
 function getPlayRating(ev: number, edge: number): string {
-  if (ev >= 9 && edge >= 5) return 'A PLAY';
-  if (ev >= 6.5 && edge >= 4) return 'B PLAY';
-  if (ev >= 4 && edge >= 2.75) return 'LEAN';
+  if (ev >= 7.5 && edge >= 4.25) return 'A PLAY';
+  if (ev >= 6 && edge >= 3.25) return 'B PLAY';
+  if (ev >= 5 && edge >= 3) return 'LEAN';
   return 'PASS';
 }
 
@@ -117,10 +117,10 @@ function getThresholds(marketType: MarketType) {
   }
 
   if (marketType === 'spreads') {
-    return { minEdge: 2.75, minEv: 4 };
+    return { minEdge: 3, minEv: 5 };
   }
 
-  return { minEdge: 2.75, minEv: 4 };
+  return { minEdge: 3, minEv: 5 };
 }
 
 function isEligiblePregameEvent(commenceTime: string): boolean {
@@ -425,16 +425,14 @@ function limitPicksPerGame(candidates: CandidatePick[]) {
     return b.confidence - a.confidence;
   });
 
-  const perGameCount = new Map<string, number>();
+  const usedEvents = new Set<string>();
   const final: CandidatePick[] = [];
 
   for (const candidate of sorted) {
-    const count = perGameCount.get(candidate.eventId) || 0;
-
-    if (count >= MAX_PICKS_PER_GAME) continue;
+    if (usedEvents.has(candidate.eventId)) continue;
 
     final.push(candidate);
-    perGameCount.set(candidate.eventId, count + 1);
+    usedEvents.add(candidate.eventId);
 
     if (final.length >= MAX_PICKS) break;
   }
