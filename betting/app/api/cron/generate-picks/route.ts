@@ -58,7 +58,6 @@ type CandidatePick = {
 };
 
 const MAJOR_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars'];
-
 const ALLOWED_SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
 const MAX_PICKS = 6;
@@ -86,8 +85,7 @@ function formatAmericanOdds(odds: number): string {
 }
 
 function formatSpreadOrTotalPoint(point: number): string {
-  if (point > 0) return `+${point}`;
-  return `${point}`;
+  return point > 0 ? `+${point}` : `${point}`;
 }
 
 function calcEV(winProb: number, americanOdds: number): number {
@@ -213,12 +211,20 @@ function makeAnalysis(input: {
   )}% with projected EV of ${input.ev.toFixed(2)}%. ${input.playRating}.`;
 }
 
-function buildCandidateKey(marketType: MarketType, outcomeName: string, point?: number) {
+function buildCandidateKey(
+  marketType: MarketType,
+  outcomeName: string,
+  point?: number
+) {
   if (marketType === 'h2h') return `h2h:${outcomeName}`;
   return `${marketType}:${outcomeName}:${point ?? 'na'}`;
 }
 
-function buildPickLabel(marketType: MarketType, outcomeName: string, point?: number) {
+function buildPickLabel(
+  marketType: MarketType,
+  outcomeName: string,
+  point?: number
+) {
   if (marketType === 'h2h') {
     return `${outcomeName} ML`;
   }
@@ -301,7 +307,7 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
 
   const results: CandidatePick[] = [];
 
-  for (const [, entry] of grouped) {
+  for (const entry of Array.from(grouped.values())) {
     if (entry.prices.length < 2) continue;
 
     const best = entry.prices.reduce((a, b) => (b.price > a.price ? b : a));
@@ -420,6 +426,7 @@ function limitPicksPerGame(candidates: CandidatePick[]) {
 
   for (const candidate of sorted) {
     const count = perGameCount.get(candidate.eventId) || 0;
+
     if (count >= MAX_PICKS_PER_GAME) continue;
 
     final.push(candidate);
@@ -434,7 +441,10 @@ function limitPicksPerGame(candidates: CandidatePick[]) {
 async function clearPregamePicks() {
   const supabase = getSupabase();
 
-  const { error } = await supabase.from('picks').delete().eq('mode', 'pregame');
+  const { error } = await supabase
+    .from('picks')
+    .delete()
+    .eq('mode', 'pregame');
 
   if (error) {
     throw new Error(`Failed deleting old pregame picks: ${error.message}`);
