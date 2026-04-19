@@ -83,14 +83,13 @@ type ExistingLivePickRow = {
 
 const LIVE_CONFIG = {
   minBooks: 3,
-  minEdge: 1.5,
-  minEv: 1.0,
+  minEdge: 3.0,
+  minEv: 2.5,
   maxOdds: 225,
   minOdds: -220,
   scanWindowMinutes: 90,
-  maxPicks: 8,
+  maxPicks: 6,
 
-  // new smart update logic
   staleMinutes: 8,
   minOddsImprovementCents: 10,
   minEdgeImprovement: 0.5,
@@ -176,7 +175,7 @@ function median(numbers: number[]): number {
 
 function normalizeConfidence(edge: number, ev: number): number {
   const raw = 50 + edge * 6 + ev * 1.5;
-  return Math.max(52, Math.min(79, Math.round(raw)));
+  return Math.max(55, Math.min(82, Math.round(raw)));
 }
 
 function isAllowedLiveOdds(odds: number): boolean {
@@ -184,8 +183,8 @@ function isAllowedLiveOdds(odds: number): boolean {
 }
 
 function getStakeUnits(edge: number, ev: number): number {
-  if (edge >= 4 && ev >= 5) return 1.5;
-  if (edge >= 2.5 && ev >= 2.5) return 1.0;
+  if (edge >= 5 && ev >= 6) return 1.5;
+  if (edge >= 3.5 && ev >= 3.5) return 1.0;
   return 0.5;
 }
 
@@ -366,15 +365,13 @@ function buildMoneylineCandidates(event: OddsEvent): LiveCandidate[] {
     const stake = getStakeUnits(edge, ev);
 
     const analysis =
-      `${team} live moneyline is showing value versus the current market. ` +
-      `Best price found: ${bestPriceEntry.price > 0 ? '+' : ''}${bestPriceEntry.price} at ${bestPriceEntry.bookmaker}. ` +
-      `Books used: ${data.prices.length}. ` +
-      `Model win probability: ${(modelProbability * 100).toFixed(2)}%. ` +
-      `Market implied probability: ${(bestPriceProbability * 100).toFixed(2)}%. ` +
-      `Consensus implied probability: ${(consensusProbability * 100).toFixed(2)}%. ` +
-      `Estimated edge: ${edge.toFixed(2)}%. ` +
-      `Estimated EV: ${ev.toFixed(2)}%. ` +
-      `Fair odds: ${fairOdds > 0 ? '+' : ''}${fairOdds}.`;
+      `${team} live moneyline is showing stronger value than the current market consensus. ` +
+      `Best number available is ${bestPriceEntry.price > 0 ? '+' : ''}${bestPriceEntry.price} at ${bestPriceEntry.bookmaker}. ` +
+      `This play cleared ${data.prices.length} major books. ` +
+      `Model win probability is ${(modelProbability * 100).toFixed(2)}% versus market implied probability of ${(bestPriceProbability * 100).toFixed(2)}%. ` +
+      `Consensus implied probability across books is ${(consensusProbability * 100).toFixed(2)}%. ` +
+      `Estimated edge is ${edge.toFixed(2)}% with projected EV of ${ev.toFixed(2)}%. ` +
+      `Fair odds come out to ${fairOdds > 0 ? '+' : ''}${fairOdds}.`;
 
     candidates.push({
       sport: event.sport_title,
@@ -492,7 +489,6 @@ export async function GET(req: NextRequest) {
       Date.now() - LIVE_CONFIG.staleMinutes * 60 * 1000
     ).toISOString();
 
-    // delete stale live picks only
     const { error: staleDeleteError } = await supabase
       .from('picks')
       .delete()
@@ -503,14 +499,15 @@ export async function GET(req: NextRequest) {
       throw new Error(`Supabase stale delete failed: ${staleDeleteError.message}`);
     }
 
-    // get existing live picks still active
     const { data: existingLivePicks, error: existingError } = await supabase
       .from('picks')
       .select('id, game, pick, odds, edge, ev, market_type, status, created_at')
       .eq('status', 'live');
 
     if (existingError) {
-      throw new Error(`Supabase existing live picks lookup failed: ${existingError.message}`);
+      throw new Error(
+        `Supabase existing live picks lookup failed: ${existingError.message}`
+      );
     }
 
     const existingMap = new Map<string, ExistingLivePickRow>();
@@ -569,26 +566,44 @@ export async function GET(req: NextRequest) {
       updated.push(candidate);
     }
 
+    const bestLivePlayKey =
+      sorted.length > 0
+        ? buildPickKey({
+            game: sorted[0].game,
+            pick: sorted[0].pick,
+            market_type: sorted[0].market_type,
+          })
+        : null;
+
     return NextResponse.json({
       success: true,
       inserted: inserted.length,
       updated: updated.length,
       skipped: skipped.length,
-      picks: sorted.map((pick) => ({
-        sport: pick.sport,
-        game: pick.game,
-        pick: pick.pick,
-        odds: pick.odds,
-        confidence: pick.confidence,
-        sportsbook: pick.sportsbook,
-        edge: Number(pick.edge.toFixed(2)),
-        ev: Number(pick.ev.toFixed(2)),
-        impliedOdds: pick.implied_prob,
-        fairOdds: pick.fair_odds,
-        analysis: pick.analysis,
-        status: pick.status,
-        commence_time: pick.commence_time,
-      })),
+      picks: sorted.map((pick) => {
+        const pickKey = buildPickKey({
+          game: pick.game,
+          pick: pick.pick,
+          market_type: pick.market_type,
+        });
+
+        return {
+          sport: pick.sport,
+          game: pick.game,
+          pick: pick.pick,
+          odds: pick.odds,
+          confidence: pick.confidence,
+          sportsbook: pick.sportsbook,
+          edge: Number(pick.edge.toFixed(2)),
+          ev: Number(pick.ev.toFixed(2)),
+          impliedOdds: pick.implied_prob,
+          fairOdds: pick.fair_odds,
+          analysis: pick.analysis,
+          status: pick.status,
+          commence_time: pick.commence_time,
+          isTopLivePlay: pickKey === bestLivePlayKey,
+        };
+      }),
       debug: {
         activeSportsQueried: activeSportKeys,
         eventsChecked: allEvents.length,
