@@ -88,7 +88,7 @@ const LIVE_CONFIG = {
   maxOdds: 225,
   minOdds: -220,
   scanWindowMinutes: 90,
-  maxPicks: 6,
+  maxPicks: 4,
 
   staleMinutes: 8,
   minOddsImprovementCents: 10,
@@ -526,8 +526,23 @@ export async function GET(req: NextRequest) {
         market_type: candidate.market_type,
       });
 
-      const existing = existingMap.get(key);
       const rowPayload = mapCandidateToRow(candidate);
+
+      // Remove any opposite-side live picks from the same game first
+      const { error: deleteOppositeError } = await supabase
+        .from('picks')
+        .delete()
+        .eq('status', 'live')
+        .eq('game', candidate.game)
+        .neq('pick', candidate.pick);
+
+      if (deleteOppositeError) {
+        throw new Error(
+          `Failed removing opposite side: ${deleteOppositeError.message}`
+        );
+      }
+
+      const existing = existingMap.get(key);
 
       if (!existing) {
         const { error: insertError } = await supabase
