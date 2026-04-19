@@ -69,14 +69,32 @@ type LiveCandidate = {
   commence_time: string;
 };
 
+type ExistingLivePickRow = {
+  id: string;
+  game: string;
+  pick: string;
+  odds: number | null;
+  edge: number | null;
+  ev: number | null;
+  market_type: string | null;
+  status: string | null;
+  created_at: string;
+};
+
 const LIVE_CONFIG = {
   minBooks: 3,
   minEdge: 1.5,
   minEv: 1.0,
   maxOdds: 225,
   minOdds: -220,
-  scanWindowMinutes: 180,
+  scanWindowMinutes: 90,
   maxPicks: 8,
+
+  // new smart update logic
+  staleMinutes: 8,
+  minOddsImprovementCents: 10,
+  minEdgeImprovement: 0.5,
+  minEvImprovement: 0.75,
 };
 
 const MAJOR_BOOKS = new Set([
@@ -131,7 +149,10 @@ function probabilityToAmerican(probability: number): number {
   return Math.round((100 * (1 - probability)) / probability);
 }
 
-function expectedValuePercent(winProbability: number, americanOdds: number): number {
+function expectedValuePercent(
+  winProbability: number,
+  americanOdds: number
+): number {
   const decimalOdds =
     americanOdds > 0
       ? 1 + americanOdds / 100
@@ -181,6 +202,34 @@ function isLiveWindow(commenceTime: string): boolean {
 
 function filterMajorBooks(bookmakers: OddsBookmaker[] = []): OddsBookmaker[] {
   return bookmakers.filter((book) => MAJOR_BOOKS.has(book.key));
+}
+
+function buildPickKey(input: {
+  game: string;
+  pick: string;
+  market_type: string;
+}): string {
+  return `${input.game}__${input.pick}__${input.market_type}`;
+}
+
+function isMeaningfullyBetter(
+  newPick: LiveCandidate,
+  oldPick: ExistingLivePickRow
+): boolean {
+  const oldOdds = Number(oldPick.odds ?? 0);
+  const oldEdge = Number(oldPick.edge ?? 0);
+  const oldEv = Number(oldPick.ev ?? 0);
+
+  const oddsImprovedEnough =
+    newPick.odds >= oldOdds + LIVE_CONFIG.minOddsImprovementCents;
+
+  const edgeImprovedEnough =
+    newPick.edge - oldEdge >= LIVE_CONFIG.minEdgeImprovement;
+
+  const evImprovedEnough =
+    newPick.ev - oldEv >= LIVE_CONFIG.minEvImprovement;
+
+  return oddsImprovedEnough || edgeImprovedEnough || evImprovedEnough;
 }
 
 async function fetchActiveSports(): Promise<string[]> {
@@ -376,6 +425,29 @@ function dedupeCandidates(candidates: LiveCandidate[]): LiveCandidate[] {
   return Array.from(bestByGame.values());
 }
 
+function mapCandidateToRow(pick: LiveCandidate) {
+  return {
+    sport: pick.sport,
+    game: pick.game,
+    pick: pick.pick,
+    odds: pick.odds,
+    confidence: String(pick.confidence),
+    analysis: pick.analysis,
+    stake: pick.stake,
+    result: 'pending',
+    sportsbook: pick.sportsbook,
+    sportsbook_key: pick.sportsbook_key,
+    status: pick.status,
+    market_type: pick.market_type,
+    edge: Number(pick.edge.toFixed(2)),
+    ev: Number(pick.ev.toFixed(2)),
+    implied_odds: Number(pick.implied_prob.toFixed(2)),
+    best_odds: pick.odds,
+    fair_odds: pick.fair_odds,
+    commence_time: pick.commence_time,
+  };
+}
+
 export async function GET(req: NextRequest) {
   try {
     const cronSecret = getCronSecret();
@@ -416,47 +488,92 @@ export async function GET(req: NextRequest) {
       })
       .slice(0, LIVE_CONFIG.maxPicks);
 
-    await supabase.from('picks').delete().eq('status', 'live');
+    const staleCutoff = new Date(
+      Date.now() - LIVE_CONFIG.staleMinutes * 60 * 1000
+    ).toISOString();
 
-    let insertedRows: unknown[] = [];
+    // delete stale live picks only
+    const { error: staleDeleteError } = await supabase
+      .from('picks')
+      .delete()
+      .eq('status', 'live')
+      .lt('created_at', staleCutoff);
 
-    if (sorted.length > 0) {
-      const rowsToInsert = sorted.map((pick) => ({
-        sport: pick.sport,
-        game: pick.game,
-        pick: pick.pick,
-        odds: pick.odds,
-        confidence: String(pick.confidence),
-        analysis: pick.analysis,
-        stake: pick.stake,
-        result: 'pending',
-        sportsbook: pick.sportsbook,
-        sportsbook_key: pick.sportsbook_key,
-        status: pick.status,
-        market_type: pick.market_type,
-        edge: Number(pick.edge.toFixed(2)),
-        ev: Number(pick.ev.toFixed(2)),
-        implied_odds: Number(pick.implied_prob.toFixed(2)),
-        best_odds: pick.odds,
-        fair_odds: pick.fair_odds,
-        commence_time: pick.commence_time,
-      }));
+    if (staleDeleteError) {
+      throw new Error(`Supabase stale delete failed: ${staleDeleteError.message}`);
+    }
 
-      const { data, error } = await supabase
-        .from('picks')
-        .insert(rowsToInsert)
-        .select();
+    // get existing live picks still active
+    const { data: existingLivePicks, error: existingError } = await supabase
+      .from('picks')
+      .select('id, game, pick, odds, edge, ev, market_type, status, created_at')
+      .eq('status', 'live');
 
-      if (error) {
-        throw new Error(`Supabase insert failed: ${error.message}`);
+    if (existingError) {
+      throw new Error(`Supabase existing live picks lookup failed: ${existingError.message}`);
+    }
+
+    const existingMap = new Map<string, ExistingLivePickRow>();
+
+    for (const row of (existingLivePicks ?? []) as ExistingLivePickRow[]) {
+      const key = buildPickKey({
+        game: row.game,
+        pick: row.pick,
+        market_type: row.market_type || 'moneyline',
+      });
+
+      existingMap.set(key, row);
+    }
+
+    const inserted: LiveCandidate[] = [];
+    const updated: LiveCandidate[] = [];
+    const skipped: LiveCandidate[] = [];
+
+    for (const candidate of sorted) {
+      const key = buildPickKey({
+        game: candidate.game,
+        pick: candidate.pick,
+        market_type: candidate.market_type,
+      });
+
+      const existing = existingMap.get(key);
+      const rowPayload = mapCandidateToRow(candidate);
+
+      if (!existing) {
+        const { error: insertError } = await supabase
+          .from('picks')
+          .insert(rowPayload);
+
+        if (insertError) {
+          throw new Error(`Supabase insert failed: ${insertError.message}`);
+        }
+
+        inserted.push(candidate);
+        continue;
       }
 
-      insertedRows = data ?? [];
+      if (!isMeaningfullyBetter(candidate, existing)) {
+        skipped.push(candidate);
+        continue;
+      }
+
+      const { error: updateError } = await supabase
+        .from('picks')
+        .update(rowPayload)
+        .eq('id', existing.id);
+
+      if (updateError) {
+        throw new Error(`Supabase update failed: ${updateError.message}`);
+      }
+
+      updated.push(candidate);
     }
 
     return NextResponse.json({
       success: true,
-      inserted: Array.isArray(insertedRows) ? insertedRows.length : 0,
+      inserted: inserted.length,
+      updated: updated.length,
+      skipped: skipped.length,
       picks: sorted.map((pick) => ({
         sport: pick.sport,
         game: pick.game,
@@ -479,6 +596,10 @@ export async function GET(req: NextRequest) {
         candidatesFound: rawCandidates.length,
         afterGameDedupe: deduped.length,
         finalSelected: sorted.length,
+        inserted: inserted.length,
+        updated: updated.length,
+        skipped: skipped.length,
+        staleMinutes: LIVE_CONFIG.staleMinutes,
         scanWindowMinutes: LIVE_CONFIG.scanWindowMinutes,
         mode: 'live',
         thresholds: {
@@ -487,6 +608,9 @@ export async function GET(req: NextRequest) {
           minEv: LIVE_CONFIG.minEv,
           minOdds: LIVE_CONFIG.minOdds,
           maxOdds: LIVE_CONFIG.maxOdds,
+          minOddsImprovementCents: LIVE_CONFIG.minOddsImprovementCents,
+          minEdgeImprovement: LIVE_CONFIG.minEdgeImprovement,
+          minEvImprovement: LIVE_CONFIG.minEvImprovement,
         },
         booksUsed: Array.from(MAJOR_BOOKS),
       },
