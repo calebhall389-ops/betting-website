@@ -63,7 +63,7 @@ const ALLOWED_SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 const MAX_PICKS = 5;
 const MAX_PICKS_PER_GAME = 1;
 const PREGAME_BUFFER_MINUTES = 15;
-const MAX_EV = 22;
+const MAX_EV = 20;
 
 function americanToImpliedProb(odds: number): number {
   if (odds > 0) return 100 / (odds + 100);
@@ -98,9 +98,9 @@ function calcEV(winProb: number, americanOdds: number): number {
 }
 
 function getPlayRating(ev: number, edge: number): string {
-  if (ev >= 7.5 && edge >= 4.25) return 'A PLAY';
-  if (ev >= 6 && edge >= 3.25) return 'B PLAY';
-  if (ev >= 5 && edge >= 3) return 'LEAN';
+  if (ev >= 8.5 && edge >= 4.75) return 'A PLAY';
+  if (ev >= 6.5 && edge >= 4.0) return 'B PLAY';
+  if (ev >= 5.5 && edge >= 3.75) return 'LEAN';
   return 'PASS';
 }
 
@@ -113,14 +113,14 @@ function getStakeUnits(playRating: string): number {
 
 function getThresholds(marketType: MarketType) {
   if (marketType === 'h2h') {
-    return { minEdge: 3.5, minEv: 5 };
+    return { minEdge: 4.0, minEv: 5.5 };
   }
 
   if (marketType === 'spreads') {
-    return { minEdge: 3, minEv: 5 };
+    return { minEdge: 3.75, minEv: 5.5 };
   }
 
-  return { minEdge: 3, minEv: 5 };
+  return { minEdge: 3.75, minEv: 5.5 };
 }
 
 function isEligiblePregameEvent(commenceTime: string): boolean {
@@ -280,6 +280,7 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
 
       for (const outcome of market.outcomes || []) {
         if (typeof outcome.price !== 'number') continue;
+
         if (marketType !== 'h2h' && typeof outcome.point !== 'number') {
           continue;
         }
@@ -327,25 +328,25 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
 
     if (entry.marketType === 'h2h') {
       if (best.price > -200 && best.price < 200) {
-        model += 0.0225;
+        model += 0.02;
       } else if (best.price < 500) {
-        model += 0.0125;
+        model += 0.01;
       } else {
-        model += 0.004;
+        model += 0.0035;
       }
 
       if (best.price > 500) {
-        model = Math.min(model, implied + 0.015);
+        model = Math.min(model, implied + 0.0125);
       }
     } else {
       if (best.price > -135 && best.price < 135) {
-        model += 0.0225;
+        model += 0.019;
       } else {
-        model += 0.014;
+        model += 0.012;
       }
     }
 
-    model = Math.min(model, 0.72);
+    model = Math.min(model, 0.70);
 
     const edge = (model - implied) * 100;
     const ev = calcEV(model, best.price);
