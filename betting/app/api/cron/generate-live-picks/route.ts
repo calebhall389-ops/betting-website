@@ -83,8 +83,8 @@ type ExistingLivePickRow = {
 
 const LIVE_CONFIG = {
   minBooks: 3,
-  minEdge: 3.0,
-  minEv: 2.5,
+  minEdge: 3.25,
+  minEv: 3.0,
   maxOdds: 225,
   minOdds: -220,
   scanWindowMinutes: 90,
@@ -209,6 +209,10 @@ function buildPickKey(input: {
   market_type: string;
 }): string {
   return `${input.game}__${input.pick}__${input.market_type}`;
+}
+
+function scoreCandidate(candidate: LiveCandidate): number {
+  return candidate.ev * 100 + candidate.edge * 10 + candidate.confidence;
 }
 
 function isMeaningfullyBetter(
@@ -404,17 +408,7 @@ function dedupeCandidates(candidates: LiveCandidate[]): LiveCandidate[] {
   for (const candidate of candidates) {
     const existing = bestByGame.get(candidate.game);
 
-    if (!existing) {
-      bestByGame.set(candidate.game, candidate);
-      continue;
-    }
-
-    const candidateScore =
-      candidate.ev * 100 + candidate.edge * 10 + candidate.confidence;
-    const existingScore =
-      existing.ev * 100 + existing.edge * 10 + existing.confidence;
-
-    if (candidateScore > existingScore) {
+    if (!existing || scoreCandidate(candidate) > scoreCandidate(existing)) {
       bestByGame.set(candidate.game, candidate);
     }
   }
@@ -518,7 +512,6 @@ export async function GET(req: NextRequest) {
         pick: row.pick,
         market_type: row.market_type || 'moneyline',
       });
-
       existingMap.set(key, row);
     }
 
