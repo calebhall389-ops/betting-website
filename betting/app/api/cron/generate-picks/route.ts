@@ -60,10 +60,10 @@ type CandidatePick = {
 const MAJOR_BOOKS = ['draftkings', 'fanduel', 'betmgm', 'caesars'];
 const ALLOWED_SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
-const MAX_PICKS = 6;
+const MAX_PICKS = 5;
 const MAX_PICKS_PER_GAME = 2;
 const PREGAME_BUFFER_MINUTES = 15;
-const MAX_EV = 25;
+const MAX_EV = 22;
 
 function americanToImpliedProb(odds: number): number {
   if (odds > 0) return 100 / (odds + 100);
@@ -98,9 +98,9 @@ function calcEV(winProb: number, americanOdds: number): number {
 }
 
 function getPlayRating(ev: number, edge: number): string {
-  if (ev >= 8 && edge >= 4.5) return 'A PLAY';
-  if (ev >= 5.5 && edge >= 3) return 'B PLAY';
-  if (ev >= 2.5 && edge >= 2) return 'LEAN';
+  if (ev >= 9 && edge >= 5) return 'A PLAY';
+  if (ev >= 6.5 && edge >= 4) return 'B PLAY';
+  if (ev >= 4 && edge >= 2.75) return 'LEAN';
   return 'PASS';
 }
 
@@ -113,14 +113,14 @@ function getStakeUnits(playRating: string): number {
 
 function getThresholds(marketType: MarketType) {
   if (marketType === 'h2h') {
-    return { minEdge: 3.25, minEv: 4.5 };
+    return { minEdge: 3.5, minEv: 5 };
   }
 
   if (marketType === 'spreads') {
-    return { minEdge: 2.25, minEv: 2.5 };
+    return { minEdge: 2.75, minEv: 4 };
   }
 
-  return { minEdge: 2.25, minEv: 2.5 };
+  return { minEdge: 2.75, minEv: 4 };
 }
 
 function isEligiblePregameEvent(commenceTime: string): boolean {
@@ -327,25 +327,25 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
 
     if (entry.marketType === 'h2h') {
       if (best.price > -200 && best.price < 200) {
-        model += 0.025;
+        model += 0.0225;
       } else if (best.price < 500) {
-        model += 0.015;
+        model += 0.0125;
       } else {
-        model += 0.005;
+        model += 0.004;
       }
 
       if (best.price > 500) {
-        model = Math.min(model, implied + 0.02);
+        model = Math.min(model, implied + 0.015);
       }
     } else {
       if (best.price > -135 && best.price < 135) {
-        model += 0.0275;
+        model += 0.0225;
       } else {
-        model += 0.0175;
+        model += 0.014;
       }
     }
 
-    model = Math.min(model, 0.75);
+    model = Math.min(model, 0.72);
 
     const edge = (model - implied) * 100;
     const ev = calcEV(model, best.price);
@@ -479,6 +479,7 @@ async function insertPicks(final: CandidatePick[]) {
     event_id: p.eventId,
     commence_time: p.commenceTime,
     result: 'pending',
+    max_play: p.play_rating === 'A PLAY',
   }));
 
   const { data, error } = await supabase
