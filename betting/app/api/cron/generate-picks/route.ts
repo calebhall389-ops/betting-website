@@ -98,9 +98,9 @@ function calcEV(winProb: number, americanOdds: number): number {
 }
 
 function getPlayRating(ev: number, edge: number): string {
-  if (ev >= 9 && edge >= 5) return 'A PLAY';
-  if (ev >= 6.5 && edge >= 4) return 'B PLAY';
-  if (ev >= 5 && edge >= 3.5) return 'LEAN';
+  if (ev >= 8 && edge >= 4.5) return 'A PLAY';
+  if (ev >= 5.5 && edge >= 3) return 'B PLAY';
+  if (ev >= 2.5 && edge >= 2) return 'LEAN';
   return 'PASS';
 }
 
@@ -113,10 +113,14 @@ function getStakeUnits(playRating: string): number {
 
 function getThresholds(marketType: MarketType) {
   if (marketType === 'h2h') {
-    return { minEdge: 3.5, minEv: 5 };
+    return { minEdge: 3.25, minEv: 4.5 };
   }
 
-  return { minEdge: 4, minEv: 6 };
+  if (marketType === 'spreads') {
+    return { minEdge: 2.25, minEv: 2.5 };
+  }
+
+  return { minEdge: 2.25, minEv: 2.5 };
 }
 
 function isEligiblePregameEvent(commenceTime: string): boolean {
@@ -276,7 +280,6 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
 
       for (const outcome of market.outcomes || []) {
         if (typeof outcome.price !== 'number') continue;
-
         if (marketType !== 'h2h' && typeof outcome.point !== 'number') {
           continue;
         }
@@ -311,6 +314,7 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
     if (entry.prices.length < 2) continue;
 
     const best = entry.prices.reduce((a, b) => (b.price > a.price ? b : a));
+
     const consensusAmerican = Math.round(
       entry.prices.reduce((sum, item) => sum + item.price, 0) /
         entry.prices.length
@@ -334,10 +338,10 @@ function buildCandidatesFromEvent(event: OddsEvent): CandidatePick[] {
         model = Math.min(model, implied + 0.02);
       }
     } else {
-      if (best.price > -140 && best.price < 140) {
-        model += 0.02;
+      if (best.price > -135 && best.price < 135) {
+        model += 0.0275;
       } else {
-        model += 0.0125;
+        model += 0.0175;
       }
     }
 
