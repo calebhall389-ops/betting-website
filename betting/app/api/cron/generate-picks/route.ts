@@ -52,18 +52,23 @@ type PickInsert = {
   play_rating: string;
 };
 
+type Candidate = PickInsert & {
+  gameKey: string;
+  sortScore: number;
+};
+
 const CRON_SECRET = process.env.CRON_SECRET;
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const SUPABASE_URL =
   process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// ---------- SETTINGS: loosened a bit ----------
-const MIN_EDGE = 3.5;
-const MIN_EV = 2.5;
-const MIN_CONFIDENCE = 54;
+// ---------- SETTINGS ----------
+const MIN_EDGE = 3.0;
+const MIN_EV = 2.0;
+const MIN_CONFIDENCE = 52;
 const MIN_BOOKS = 2;
-const MAX_PICKS = 4;
+const MAX_PICKS = 5;
 const ONE_PICK_PER_GAME = true;
 
 // only use major books
@@ -106,9 +111,11 @@ function americanToImpliedProb(odds: number): number {
 
 function probabilityToAmerican(prob: number): number | null {
   if (prob <= 0 || prob >= 1) return null;
+
   if (prob >= 0.5) {
     return Math.round((-prob / (1 - prob)) * 100);
   }
+
   return Math.round(((1 - prob) / prob) * 100);
 }
 
@@ -126,7 +133,7 @@ function getPlayRating(edge: number, ev: number): string {
   if (edge >= 6 && ev >= 5) return 'A';
   if (edge >= 5 && ev >= 4) return 'B+';
   if (edge >= 4 && ev >= 3) return 'B';
-  if (edge >= 3.5 && ev >= 2.5) return 'C';
+  if (edge >= 3 && ev >= 2) return 'C';
   return 'LEAN';
 }
 
@@ -221,10 +228,12 @@ function marketLabel(
   point?: number
 ): string {
   if (type === 'h2h') return `${side} ML`;
+
   if (type === 'spreads') {
     const p = typeof point === 'number' ? point : 0;
     return `${side} ${p > 0 ? '+' : ''}${p}`;
   }
+
   const p = typeof point === 'number' ? point : 0;
   return `${side} ${p}`;
 }
@@ -253,11 +262,6 @@ function getCandidateAnalysis(input: {
   return `${input.pick} at ${input.sportsbook} is priced at ${oddsText} versus a model fair line of ${fairOddsText}. Model probability is ${(input.modelProb * 100).toFixed(1)}% compared with market implied probability of ${(input.impliedProb * 100).toFixed(1)}%. Estimated edge is ${input.edge.toFixed(2)}% and estimated EV is ${input.ev.toFixed(2)}%. Books used in consensus: ${input.booksUsed}. Market: ${input.marketType}.`;
 }
 
-type Candidate = PickInsert & {
-  gameKey: string;
-  sortScore: number;
-};
-
 function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
   const bookmakers = (event.bookmakers || []).filter((b) =>
     ALLOWED_BOOKS.has(b.key)
@@ -274,7 +278,12 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
   {
     const sidePrices: Record<
       string,
-      { prices: number[]; bestPrice: number; bestBook: string; bestBookKey: string }
+      {
+        prices: number[];
+        bestPrice: number;
+        bestBook: string;
+        bestBookKey: string;
+      }
     > = {};
 
     for (const bm of bookmakers) {
@@ -310,9 +319,7 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
         data.prices.map((p) => americanToImpliedProb(p))
       );
 
-      // small model bump over consensus
-      const modelProb = Math.min(consensusProb + 0.035, 0.92);
-
+      const modelProb = Math.min(consensusProb + 0.045, 0.93);
       const bestPrice = data.bestPrice;
       const impliedProb = americanToImpliedProb(bestPrice);
       const edge = (modelProb - impliedProb) * 100;
@@ -354,11 +361,11 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           status: 'open',
           commence_time: event.commence_time,
           market_type: 'moneyline',
-          edge,
-          ev,
+          edge: Number(edge.toFixed(2)),
+          ev: Number(ev.toFixed(2)),
           implied_probability: Number((impliedProb * 100).toFixed(2)),
           model_probability: Number((modelProb * 100).toFixed(2)),
-          fair_odds,
+          fair_odds: fairOdds,
           play_rating: playRating,
           gameKey: event.id,
           sortScore: edge * 0.65 + ev * 0.35,
@@ -386,7 +393,10 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
       if (!market) continue;
 
       for (const outcome of market.outcomes) {
-        if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') {
+        if (
+          typeof outcome.price !== 'number' ||
+          typeof outcome.point !== 'number'
+        ) {
           continue;
         }
 
@@ -420,10 +430,9 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
         item.prices.map((p) => americanToImpliedProb(p))
       );
 
-      const strongerSpread =
-        Math.abs(item.point) <= 4.5 ? 0.03 : 0.022;
+      const strongerSpread = Math.abs(item.point) <= 4.5 ? 0.04 : 0.03;
 
-      const modelProb = Math.min(consensusProb + strongerSpread, 0.88);
+      const modelProb = Math.min(consensusProb + strongerSpread, 0.9);
       const bestPrice = item.bestPrice;
       const impliedProb = americanToImpliedProb(bestPrice);
       const edge = (modelProb - impliedProb) * 100;
@@ -465,11 +474,11 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           status: 'open',
           commence_time: event.commence_time,
           market_type: 'spread',
-          edge,
-          ev,
+          edge: Number(edge.toFixed(2)),
+          ev: Number(ev.toFixed(2)),
           implied_probability: Number((impliedProb * 100).toFixed(2)),
           model_probability: Number((modelProb * 100).toFixed(2)),
-          fair_odds,
+          fair_odds: fairOdds,
           play_rating: playRating,
           gameKey: event.id,
           sortScore: edge * 0.65 + ev * 0.35,
@@ -497,7 +506,10 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
       if (!market) continue;
 
       for (const outcome of market.outcomes) {
-        if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') {
+        if (
+          typeof outcome.price !== 'number' ||
+          typeof outcome.point !== 'number'
+        ) {
           continue;
         }
 
@@ -531,7 +543,7 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
         item.prices.map((p) => americanToImpliedProb(p))
       );
 
-      const modelProb = Math.min(consensusProb + 0.028, 0.87);
+      const modelProb = Math.min(consensusProb + 0.035, 0.9);
       const bestPrice = item.bestPrice;
       const impliedProb = americanToImpliedProb(bestPrice);
       const edge = (modelProb - impliedProb) * 100;
@@ -573,11 +585,11 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           status: 'open',
           commence_time: event.commence_time,
           market_type: 'total',
-          edge,
-          ev,
+          edge: Number(edge.toFixed(2)),
+          ev: Number(ev.toFixed(2)),
           implied_probability: Number((impliedProb * 100).toFixed(2)),
           model_probability: Number((modelProb * 100).toFixed(2)),
-          fair_odds,
+          fair_odds: fairOdds,
           play_rating: playRating,
           gameKey: event.id,
           sortScore: edge * 0.65 + ev * 0.35,
@@ -646,7 +658,9 @@ export async function GET(req: NextRequest) {
     }
 
     const filteredEvents = allEvents.filter(
-      (event) => isPregame(event.commence_time) && isTodayOrTomorrow(event.commence_time)
+      (event) =>
+        isPregame(event.commence_time) &&
+        isTodayOrTomorrow(event.commence_time)
     );
 
     let candidates: Candidate[] = [];
@@ -660,6 +674,7 @@ export async function GET(req: NextRequest) {
 
     if (ONE_PICK_PER_GAME) {
       const seenGames = new Set<string>();
+
       candidates = candidates.filter((c) => {
         if (seenGames.has(c.gameKey)) return false;
         seenGames.add(c.gameKey);
@@ -667,11 +682,9 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const finalPicks = candidates.slice(0, MAX_PICKS).map(
-      ({ gameKey, sortScore, ...pick }) => pick
-    );
-
-    await clearOldOpenPregamePicks();
+    const finalPicks: PickInsert[] = candidates
+      .slice(0, MAX_PICKS)
+      .map(({ gameKey, sortScore, ...pick }) => pick);
 
     if (!finalPicks.length) {
       return NextResponse.json({
@@ -691,6 +704,8 @@ export async function GET(req: NextRequest) {
         },
       });
     }
+
+    await clearOldOpenPregamePicks();
 
     const inserted = await insertPicks(finalPicks);
 
