@@ -46,10 +46,6 @@ type PickInsert = {
   market_type: string;
   edge: number;
   ev: number;
-  implied_probability: number;
-  model_probability: number;
-  fair_odds: number | null;
-  play_rating: string;
 };
 
 type Candidate = PickInsert & {
@@ -363,10 +359,6 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           market_type: 'moneyline',
           edge: Number(edge.toFixed(2)),
           ev: Number(ev.toFixed(2)),
-          implied_probability: Number((impliedProb * 100).toFixed(2)),
-          model_probability: Number((modelProb * 100).toFixed(2)),
-          fair_odds: fairOdds,
-          play_rating: playRating,
           gameKey: event.id,
           sortScore: edge * 0.65 + ev * 0.35,
         });
@@ -431,7 +423,6 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
       );
 
       const strongerSpread = Math.abs(item.point) <= 4.5 ? 0.04 : 0.03;
-
       const modelProb = Math.min(consensusProb + strongerSpread, 0.9);
       const bestPrice = item.bestPrice;
       const impliedProb = americanToImpliedProb(bestPrice);
@@ -476,10 +467,6 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           market_type: 'spread',
           edge: Number(edge.toFixed(2)),
           ev: Number(ev.toFixed(2)),
-          implied_probability: Number((impliedProb * 100).toFixed(2)),
-          model_probability: Number((modelProb * 100).toFixed(2)),
-          fair_odds: fairOdds,
-          play_rating: playRating,
           gameKey: event.id,
           sortScore: edge * 0.65 + ev * 0.35,
         });
@@ -587,10 +574,6 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           market_type: 'total',
           edge: Number(edge.toFixed(2)),
           ev: Number(ev.toFixed(2)),
-          implied_probability: Number((impliedProb * 100).toFixed(2)),
-          model_probability: Number((modelProb * 100).toFixed(2)),
-          fair_odds: fairOdds,
-          play_rating: playRating,
           gameKey: event.id,
           sortScore: edge * 0.65 + ev * 0.35,
         });
