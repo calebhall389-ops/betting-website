@@ -20,8 +20,8 @@ type PickRow = {
   ev?: number | null;
   play_rating?: string | null;
   status?: string | null;
-  mode?: string | null;
-  market_type?: 'h2h' | 'spreads' | 'totals' | string | null;
+  pick_type?: string | null;
+  market_type?: 'moneyline' | 'spread' | 'total' | 'h2h' | 'spreads' | 'totals' | string | null;
   commence_time?: string | null;
 };
 
@@ -42,7 +42,7 @@ function getSupabase() {
 }
 
 function formatAmericanOdds(odds?: number | null) {
-  if (typeof odds !== 'number') return '—';
+  if (typeof odds !== 'number' || Number.isNaN(odds)) return '—';
   return odds > 0 ? `+${odds}` : `${odds}`;
 }
 
@@ -77,26 +77,28 @@ function getSportBadgeClasses(sport: string) {
   if (sport === 'MLB') return 'text-emerald-400';
   if (sport === 'NBA') return 'text-orange-400';
   if (sport === 'NHL') return 'text-cyan-400';
+  if (sport === 'NFL') return 'text-lime-400';
+  if (sport === 'NCAAB') return 'text-violet-400';
   return 'text-blue-400';
 }
 
 function getMarketBadgeLabel(marketType?: string | null) {
-  if (marketType === 'h2h') return 'ML';
-  if (marketType === 'spreads') return 'SPREAD';
-  if (marketType === 'totals') return 'TOTAL';
+  if (marketType === 'h2h' || marketType === 'moneyline') return 'ML';
+  if (marketType === 'spreads' || marketType === 'spread') return 'SPREAD';
+  if (marketType === 'totals' || marketType === 'total') return 'TOTAL';
   return 'PICK';
 }
 
 function getMarketBadgeClasses(marketType?: string | null) {
-  if (marketType === 'h2h') {
+  if (marketType === 'h2h' || marketType === 'moneyline') {
     return 'border border-blue-500/30 bg-blue-500/10 text-blue-300';
   }
 
-  if (marketType === 'spreads') {
+  if (marketType === 'spreads' || marketType === 'spread') {
     return 'border border-violet-500/30 bg-violet-500/10 text-violet-300';
   }
 
-  if (marketType === 'totals') {
+  if (marketType === 'totals' || marketType === 'total') {
     return 'border border-cyan-500/30 bg-cyan-500/10 text-cyan-300';
   }
 
@@ -104,15 +106,15 @@ function getMarketBadgeClasses(marketType?: string | null) {
 }
 
 function getRatingBadgeClasses(rating?: string | null) {
-  if (rating === 'A PLAY') {
+  if (rating === 'A+' || rating === 'A' || rating === 'A PLAY') {
     return 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
   }
 
-  if (rating === 'B PLAY') {
+  if (rating === 'B+' || rating === 'B' || rating === 'B PLAY') {
     return 'border border-sky-500/30 bg-sky-500/10 text-sky-300';
   }
 
-  if (rating === 'LEAN') {
+  if (rating === 'C' || rating === 'LEAN') {
     return 'border border-yellow-500/30 bg-yellow-500/10 text-yellow-300';
   }
 
@@ -143,12 +145,13 @@ async function getPicks(): Promise<PickRow[]> {
         ev,
         play_rating,
         status,
-        mode,
+        pick_type,
         market_type,
         commence_time
       `
     )
-    .eq('mode', 'pregame')
+    .eq('pick_type', 'pregame')
+    .eq('status', 'open')
     .order('ev', { ascending: false })
     .order('created_at', { ascending: false });
 
@@ -278,7 +281,7 @@ export default async function PicksPage() {
                   </div>
                 </div>
 
-                <div className="mt-6 mb-5">
+                <div className="mb-5 mt-6">
                   <div className="h-px w-full bg-white/10" />
                 </div>
 
