@@ -46,6 +46,7 @@ type PickInsert = {
   market_type: string;
   edge: number;
   ev: number;
+  pick_type: string;
 };
 
 type Candidate = PickInsert & {
@@ -60,26 +61,23 @@ const SUPABASE_URL =
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // ---------- SETTINGS ----------
-const MIN_EDGE = 3.0;
-const MIN_EV = 2.0;
-const MIN_CONFIDENCE = 52;
+const MIN_EDGE = 4.0;
+const MIN_EV = 3.0;
+const MIN_CONFIDENCE = 55;
 const MIN_BOOKS = 2;
-const MAX_PICKS = 5;
+const MAX_PICKS = 4;
 const ONE_PICK_PER_GAME = true;
+const MAX_UNDERDOG_ODDS = 170;
 
-// only use major books
+// only use cleaner books
 const ALLOWED_BOOKS = new Set([
   'draftkings',
   'fanduel',
   'betmgm',
   'caesars',
-  'espnbet',
-  'ballybet',
   'bet365',
-  'betrivers',
-  'pointsbetus',
-  'hardrockbet',
-  'williamhill_us',
+  'espnbet',   // theScore Bet often maps here in your display
+  'fanatics',
 ]);
 
 const SUPPORTED_SPORTS = [
@@ -125,18 +123,16 @@ function expectedValue(modelProb: number, americanOdds: number): number {
 }
 
 function getPlayRating(edge: number, ev: number): string {
-  if (edge >= 7 && ev >= 6) return 'A+';
-  if (edge >= 6 && ev >= 5) return 'A';
-  if (edge >= 5 && ev >= 4) return 'B+';
-  if (edge >= 4 && ev >= 3) return 'B';
-  if (edge >= 3 && ev >= 2) return 'C';
-  return 'LEAN';
+  if (edge >= 7 && ev >= 6) return 'A PLAY';
+  if (edge >= 5.5 && ev >= 4.5) return 'B PLAY';
+  if (edge >= 4 && ev >= 3) return 'LEAN';
+  return 'PASS';
 }
 
 function getConfidence(modelProb: number, edge: number, ev: number): number {
   const probScore = modelProb * 100;
-  const edgeBoost = Math.min(edge * 1.8, 12);
-  const evBoost = Math.min(ev * 1.2, 10);
+  const edgeBoost = Math.min(edge * 1.5, 10);
+  const evBoost = Math.min(ev * 1.0, 8);
 
   return Math.max(
     1,
@@ -234,6 +230,25 @@ function marketLabel(
   return `${side} ${p}`;
 }
 
+function passesOddsFilter(
+  odds: number,
+  confidence: number,
+  edge: number,
+  marketType: 'moneyline' | 'spread' | 'total'
+): boolean {
+  if (marketType === 'moneyline') {
+    if (odds > MAX_UNDERDOG_ODDS) return false;
+    if (odds > 130 && confidence < 58) return false;
+    if (odds > 110 && edge < 4.5) return false;
+  }
+
+  if (marketType === 'spread' || marketType === 'total') {
+    if (odds > 150) return false;
+  }
+
+  return true;
+}
+
 function getCandidateAnalysis(input: {
   pick: string;
   sportsbook: string;
@@ -315,7 +330,7 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
         data.prices.map((p) => americanToImpliedProb(p))
       );
 
-      const modelProb = Math.min(consensusProb + 0.045, 0.93);
+      const modelProb = Math.min(consensusProb + 0.03, 0.9);
       const bestPrice = data.bestPrice;
       const impliedProb = americanToImpliedProb(bestPrice);
       const edge = (modelProb - impliedProb) * 100;
@@ -327,7 +342,9 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
       if (
         edge >= MIN_EDGE &&
         ev >= MIN_EV &&
-        confidence >= MIN_CONFIDENCE
+        confidence >= MIN_CONFIDENCE &&
+        playRating !== 'PASS' &&
+        passesOddsFilter(bestPrice, confidence, edge, 'moneyline')
       ) {
         const pick = marketLabel('h2h', team);
         const analysis = getCandidateAnalysis({
@@ -350,7 +367,7 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           odds: bestPrice,
           confidence: String(confidence),
           analysis,
-          stake: playRating === 'A+' || playRating === 'A' ? 1.5 : 1,
+          stake: playRating === 'A PLAY' ? 1.5 : 1,
           result: 'pending',
           sportsbook: data.bestBook,
           sportsbook_key: data.bestBookKey,
@@ -359,8 +376,9 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           market_type: 'moneyline',
           edge: Number(edge.toFixed(2)),
           ev: Number(ev.toFixed(2)),
+          pick_type: 'pregame',
           gameKey: event.id,
-          sortScore: edge * 0.65 + ev * 0.35,
+          sortScore: edge * 0.6 + ev * 0.4,
         });
       }
     }
@@ -422,8 +440,8 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
         item.prices.map((p) => americanToImpliedProb(p))
       );
 
-      const strongerSpread = Math.abs(item.point) <= 4.5 ? 0.04 : 0.03;
-      const modelProb = Math.min(consensusProb + strongerSpread, 0.9);
+      const spreadBump = Math.abs(item.point) <= 4.5 ? 0.028 : 0.022;
+      const modelProb = Math.min(consensusProb + spreadBump, 0.88);
       const bestPrice = item.bestPrice;
       const impliedProb = americanToImpliedProb(bestPrice);
       const edge = (modelProb - impliedProb) * 100;
@@ -435,7 +453,9 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
       if (
         edge >= MIN_EDGE &&
         ev >= MIN_EV &&
-        confidence >= MIN_CONFIDENCE
+        confidence >= MIN_CONFIDENCE &&
+        playRating !== 'PASS' &&
+        passesOddsFilter(bestPrice, confidence, edge, 'spread')
       ) {
         const pick = marketLabel('spreads', item.side, item.point);
         const analysis = getCandidateAnalysis({
@@ -458,7 +478,7 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           odds: bestPrice,
           confidence: String(confidence),
           analysis,
-          stake: playRating === 'A+' || playRating === 'A' ? 1.5 : 1,
+          stake: playRating === 'A PLAY' ? 1.5 : 1,
           result: 'pending',
           sportsbook: item.bestBook,
           sportsbook_key: item.bestBookKey,
@@ -467,8 +487,9 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           market_type: 'spread',
           edge: Number(edge.toFixed(2)),
           ev: Number(ev.toFixed(2)),
+          pick_type: 'pregame',
           gameKey: event.id,
-          sortScore: edge * 0.65 + ev * 0.35,
+          sortScore: edge * 0.6 + ev * 0.4,
         });
       }
     }
@@ -530,7 +551,7 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
         item.prices.map((p) => americanToImpliedProb(p))
       );
 
-      const modelProb = Math.min(consensusProb + 0.035, 0.9);
+      const modelProb = Math.min(consensusProb + 0.025, 0.87);
       const bestPrice = item.bestPrice;
       const impliedProb = americanToImpliedProb(bestPrice);
       const edge = (modelProb - impliedProb) * 100;
@@ -542,7 +563,9 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
       if (
         edge >= MIN_EDGE &&
         ev >= MIN_EV &&
-        confidence >= MIN_CONFIDENCE
+        confidence >= MIN_CONFIDENCE &&
+        playRating !== 'PASS' &&
+        passesOddsFilter(bestPrice, confidence, edge, 'total')
       ) {
         const pick = marketLabel('totals', item.side, item.point);
         const analysis = getCandidateAnalysis({
@@ -565,7 +588,7 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           odds: bestPrice,
           confidence: String(confidence),
           analysis,
-          stake: playRating === 'A+' || playRating === 'A' ? 1.5 : 1,
+          stake: playRating === 'A PLAY' ? 1.5 : 1,
           result: 'pending',
           sportsbook: item.bestBook,
           sportsbook_key: item.bestBookKey,
@@ -574,8 +597,9 @@ function extractCandidatesFromEvent(event: OddsEvent): Candidate[] {
           market_type: 'total',
           edge: Number(edge.toFixed(2)),
           ev: Number(ev.toFixed(2)),
+          pick_type: 'pregame',
           gameKey: event.id,
-          sortScore: edge * 0.65 + ev * 0.35,
+          sortScore: edge * 0.6 + ev * 0.4,
         });
       }
     }
@@ -590,7 +614,8 @@ async function clearOldOpenPregamePicks() {
   const { error } = await supabase
     .from('picks')
     .delete()
-    .eq('status', 'open');
+    .eq('status', 'open')
+    .eq('pick_type', 'pregame');
 
   if (error) {
     throw new Error(`Failed clearing old picks: ${error.message}`);
@@ -684,6 +709,8 @@ export async function GET(req: NextRequest) {
           minBooks: MIN_BOOKS,
           maxPicks: MAX_PICKS,
           onePickPerGame: ONE_PICK_PER_GAME,
+          maxUnderdogOdds: MAX_UNDERDOG_ODDS,
+          allowedBooks: Array.from(ALLOWED_BOOKS),
         },
       });
     }
@@ -706,6 +733,8 @@ export async function GET(req: NextRequest) {
         minBooks: MIN_BOOKS,
         maxPicks: MAX_PICKS,
         onePickPerGame: ONE_PICK_PER_GAME,
+        maxUnderdogOdds: MAX_UNDERDOG_ODDS,
+        allowedBooks: Array.from(ALLOWED_BOOKS),
       },
     });
   } catch (error) {
