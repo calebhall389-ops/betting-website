@@ -22,16 +22,23 @@ const ALLOWED_BOOKS = new Set([
 
 const SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
+// qualification
 const MIN_BOOKS = 2;
+const MIN_CONSENSUS_BOOKS = 2;
 const MIN_EDGE = 0.75;
 const MIN_EV = 0.75;
+
+// board controls
 const MAX_PICKS_PER_RUN = 12;
 const ONE_PICK_PER_GAME = true;
 const LOOKAHEAD_HOURS = 36;
 const MIN_MINUTES_TO_START = 5;
 
-// require at least this many OTHER books after removing best book
-const MIN_CONSENSUS_BOOKS = 2;
+// sanity filters to remove fake broken edges
+const MAX_REASONABLE_EDGE = 25;
+const MAX_REASONABLE_EV = 40;
+const MAX_REASONABLE_DOG_PROB = 0.72;
+const MAX_REASONABLE_DOG_ODDS = 200;
 
 // ===============================
 // TYPES
@@ -61,29 +68,6 @@ type OddsEvent = {
   home_team: string;
   away_team: string;
   bookmakers?: OddsBookmaker[];
-};
-
-type Candidate = {
-  sport: string;
-  game: string;
-  pick: string;
-  market_type: 'moneyline' | 'spread' | 'total';
-  market_key: string;
-  selection_name: string;
-  odds: number;
-  sportsbook: string;
-  sportsbook_key: string;
-  confidence: number;
-  analysis: string;
-  stake: number;
-  fair_line: number | null;
-  model_probability: number;
-  implied_probability: number;
-  edge: number;
-  ev: number;
-  play_rating: 'A' | 'B' | 'C';
-  status: 'pregame';
-  commence_time: string;
 };
 
 type PriceEntry = {
@@ -118,6 +102,32 @@ type TotalAggregate = {
   prices: TotalPriceEntry[];
 };
 
+type PlayRating = 'MAX' | 'A' | 'B' | 'C';
+
+type Candidate = {
+  sport: string;
+  game: string;
+  pick: string;
+  market_type: 'moneyline' | 'spread' | 'total';
+  market_key: string;
+  selection_name: string;
+  odds: number;
+  sportsbook: string;
+  sportsbook_key: string;
+  confidence: number;
+  analysis: string;
+  stake: number;
+  fair_line: number | null;
+  model_probability: number;
+  implied_probability: number;
+  edge: number;
+  ev: number;
+  play_rating: PlayRating;
+  status: 'pregame';
+  commence_time: string;
+  max_play: boolean;
+};
+
 type InsertRow = {
   sport: string;
   game: string;
@@ -140,6 +150,9 @@ type InsertRow = {
   edge: number;
   ev: number;
   play_rating: string;
+  max_play: boolean;
+  pick_type: string;
+  is_live: boolean;
 };
 
 // ===============================
@@ -166,9 +179,7 @@ function americanToImpliedProb(odds: number): number {
 
 function probToAmerican(prob: number): number {
   if (prob <= 0 || prob >= 1) return 0;
-  if (prob >= 0.5) {
-    return Math.round((-100 * prob) / (1 - prob));
-  }
+  if (prob >= 0.5) return Math.round((-100 * prob) / (1 - prob));
   return Math.round((100 * (1 - prob)) / prob);
 }
 
@@ -199,19 +210,6 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-function getPlayRating(edge: number, ev: number): 'A' | 'B' | 'C' | null {
-  if (edge >= 4 && ev >= 6) return 'A';
-  if (edge >= 2 && ev >= 2) return 'B';
-  if (edge >= 0.75 && ev >= 0.75) return 'C';
-  return null;
-}
-
-function getStakeUnits(rating: 'A' | 'B' | 'C'): number {
-  if (rating === 'A') return 1.5;
-  if (rating === 'B') return 1.0;
-  return 0.75;
-}
-
 function sportLabel(sportKey: string): string {
   if (sportKey.includes('mlb')) return 'MLB';
   if (sportKey.includes('nba')) return 'NBA';
@@ -233,21 +231,61 @@ function isWithinWindow(commenceTime: string): boolean {
   return diffHours <= LOOKAHEAD_HOURS && diffMinutes >= MIN_MINUTES_TO_START;
 }
 
-function getAnalysis(candidate: Candidate): string {
-  const fairLineText =
-    candidate.fair_line !== null
-      ? `${candidate.fair_line > 0 ? '+' : ''}${candidate.fair_line}`
-      : 'N/A';
+function formatAmerican(odds: number): string {
+  return odds > 0 ? `+${odds}` : `${odds}`;
+}
 
-  const oddsText = `${candidate.odds > 0 ? '+' : ''}${candidate.odds}`;
+function getPlayRating(edge: number, ev: number): PlayRating | null {
+  if (edge >= 6 && ev >= 10) return 'MAX';
+  if (edge >= 4 && ev >= 6) return 'A';
+  if (edge >= 2 && ev >= 2) return 'B';
+  if (edge >= 0.75 && ev >= 0.75) return 'C';
+  return null;
+}
 
-  return `${candidate.pick} at ${candidate.sportsbook} is priced at ${oddsText} versus consensus fair line ${fairLineText}. Consensus model probability is ${round2(
+function getStakeUnits(rating: PlayRating): number {
+  if (rating === 'MAX') return 2.0;
+  if (rating === 'A') return 1.5;
+  if (rating === 'B') return 1.0;
+  return 0.75;
+}
+
+function ratingRank(rating: PlayRating): number {
+  if (rating === 'MAX') return 4;
+  if (rating === 'A') return 3;
+  if (rating === 'B') return 2;
+  return 1;
+}
+
+function passesSanityFilters(
+  modelProb: number,
+  bestOdds: number,
+  edge: number,
+  ev: number
+): boolean {
+  if (edge > MAX_REASONABLE_EDGE) return false;
+  if (ev > MAX_REASONABLE_EV) return false;
+  if (modelProb > MAX_REASONABLE_DOG_PROB && bestOdds > MAX_REASONABLE_DOG_ODDS) {
+    return false;
+  }
+  return true;
+}
+
+function buildAnalysis(candidate: Candidate): string {
+  const fairText =
+    candidate.fair_line !== null ? formatAmerican(candidate.fair_line) : 'N/A';
+
+  const ratingText = candidate.max_play ? 'MAX PLAY' : `${candidate.play_rating} PLAY`;
+
+  return `${candidate.pick} at ${candidate.sportsbook} is available at ${formatAmerican(
+    candidate.odds
+  )} versus a consensus fair line of ${fairText}. Consensus win probability is ${round2(
     candidate.model_probability * 100
   )}% versus implied probability ${round2(
     candidate.implied_probability * 100
-  )}%. Estimated edge is ${round2(candidate.edge)}% and expected value is ${round2(
+  )}%. Estimated edge is ${round2(candidate.edge)}% with expected value of ${round2(
     candidate.ev
-  )}%. Play rating: ${candidate.play_rating} PLAY.`;
+  )}%. Rating: ${ratingText}.`;
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -422,9 +460,10 @@ function buildMoneylineCandidates(event: OddsEvent): Candidate[] {
     const implied = americanToImpliedProb(best.price);
     const edge = (modelProb - implied) * 100;
     const ev = expectedValuePercent(modelProb, best.price);
-    const fairLine = probToAmerican(modelProb);
-    const rating = getPlayRating(edge, ev);
 
+    if (!passesSanityFilters(modelProb, best.price, edge, ev)) continue;
+
+    const rating = getPlayRating(edge, ev);
     if (!rating) continue;
     if (edge < MIN_EDGE || ev < MIN_EV) continue;
 
@@ -441,7 +480,7 @@ function buildMoneylineCandidates(event: OddsEvent): Candidate[] {
       confidence: Math.round(modelProb * 100),
       analysis: '',
       stake: getStakeUnits(rating),
-      fair_line: fairLine,
+      fair_line: probToAmerican(modelProb),
       model_probability: modelProb,
       implied_probability: implied,
       edge: round2(edge),
@@ -449,6 +488,7 @@ function buildMoneylineCandidates(event: OddsEvent): Candidate[] {
       play_rating: rating,
       status: 'pregame',
       commence_time: event.commence_time,
+      max_play: rating === 'MAX',
     });
   }
 
@@ -514,9 +554,10 @@ function buildSpreadCandidates(event: OddsEvent): Candidate[] {
     const implied = americanToImpliedProb(best.price);
     const edge = (modelProb - implied) * 100;
     const ev = expectedValuePercent(modelProb, best.price);
-    const fairLine = probToAmerican(modelProb);
-    const rating = getPlayRating(edge, ev);
 
+    if (!passesSanityFilters(modelProb, best.price, edge, ev)) continue;
+
+    const rating = getPlayRating(edge, ev);
     if (!rating) continue;
     if (edge < MIN_EDGE || ev < MIN_EV) continue;
 
@@ -535,7 +576,7 @@ function buildSpreadCandidates(event: OddsEvent): Candidate[] {
       confidence: Math.round(modelProb * 100),
       analysis: '',
       stake: getStakeUnits(rating),
-      fair_line: fairLine,
+      fair_line: probToAmerican(modelProb),
       model_probability: modelProb,
       implied_probability: implied,
       edge: round2(edge),
@@ -543,6 +584,7 @@ function buildSpreadCandidates(event: OddsEvent): Candidate[] {
       play_rating: rating,
       status: 'pregame',
       commence_time: event.commence_time,
+      max_play: rating === 'MAX',
     });
   }
 
@@ -621,9 +663,10 @@ function buildTotalCandidates(event: OddsEvent): Candidate[] {
       const implied = americanToImpliedProb(best.price);
       const edge = (modelProb - implied) * 100;
       const ev = expectedValuePercent(modelProb, best.price);
-      const fairLine = probToAmerican(modelProb);
-      const rating = getPlayRating(edge, ev);
 
+      if (!passesSanityFilters(modelProb, best.price, edge, ev)) continue;
+
+      const rating = getPlayRating(edge, ev);
       if (!rating) continue;
       if (edge < MIN_EDGE || ev < MIN_EV) continue;
 
@@ -640,7 +683,7 @@ function buildTotalCandidates(event: OddsEvent): Candidate[] {
         confidence: Math.round(modelProb * 100),
         analysis: '',
         stake: getStakeUnits(rating),
-        fair_line: fairLine,
+        fair_line: probToAmerican(modelProb),
         model_probability: modelProb,
         implied_probability: implied,
         edge: round2(edge),
@@ -648,6 +691,7 @@ function buildTotalCandidates(event: OddsEvent): Candidate[] {
         play_rating: rating,
         status: 'pregame',
         commence_time: event.commence_time,
+        max_play: rating === 'MAX',
       });
     }
   }
@@ -680,6 +724,7 @@ export async function GET(req: NextRequest) {
 
     let eventsChecked = 0;
     let candidatesFound = 0;
+
     const allCandidates: Candidate[] = [];
 
     for (const sport of SPORTS) {
@@ -698,7 +743,7 @@ export async function GET(req: NextRequest) {
         const eventCandidates = [...moneyline, ...spreads, ...totals].map(
           (candidate) => {
             const next = { ...candidate };
-            next.analysis = getAnalysis(next);
+            next.analysis = buildAnalysis(next);
             return next;
           }
         );
@@ -709,12 +754,9 @@ export async function GET(req: NextRequest) {
     }
 
     allCandidates.sort((a, b) => {
-      const rank = { A: 3, B: 2, C: 1 };
-
-      if (rank[b.play_rating] !== rank[a.play_rating]) {
-        return rank[b.play_rating] - rank[a.play_rating];
+      if (ratingRank(b.play_rating) !== ratingRank(a.play_rating)) {
+        return ratingRank(b.play_rating) - ratingRank(a.play_rating);
       }
-
       if (b.ev !== a.ev) return b.ev - a.ev;
       return b.edge - a.edge;
     });
@@ -723,7 +765,6 @@ export async function GET(req: NextRequest) {
 
     if (ONE_PICK_PER_GAME) {
       const bestByGame = new Map<string, Candidate>();
-      const rank = { A: 3, B: 2, C: 1 };
 
       for (const candidate of allCandidates) {
         const existing = bestByGame.get(candidate.game);
@@ -733,13 +774,11 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        const currentRank = rank[candidate.play_rating];
-        const existingRank = rank[existing.play_rating];
-
         if (
-          currentRank > existingRank ||
-          (currentRank === existingRank && candidate.ev > existing.ev) ||
-          (currentRank === existingRank &&
+          ratingRank(candidate.play_rating) > ratingRank(existing.play_rating) ||
+          (ratingRank(candidate.play_rating) === ratingRank(existing.play_rating) &&
+            candidate.ev > existing.ev) ||
+          (ratingRank(candidate.play_rating) === ratingRank(existing.play_rating) &&
             candidate.ev === existing.ev &&
             candidate.edge > existing.edge)
         ) {
@@ -748,12 +787,9 @@ export async function GET(req: NextRequest) {
       }
 
       finalCandidates = Array.from(bestByGame.values()).sort((a, b) => {
-        const rankMap = { A: 3, B: 2, C: 1 };
-
-        if (rankMap[b.play_rating] !== rankMap[a.play_rating]) {
-          return rankMap[b.play_rating] - rankMap[a.play_rating];
+        if (ratingRank(b.play_rating) !== ratingRank(a.play_rating)) {
+          return ratingRank(b.play_rating) - ratingRank(a.play_rating);
         }
-
         if (b.ev !== a.ev) return b.ev - a.ev;
         return b.edge - a.edge;
       });
@@ -775,6 +811,7 @@ export async function GET(req: NextRequest) {
           minEdge: MIN_EDGE,
           minEv: MIN_EV,
           maxPicksPerRun: MAX_PICKS_PER_RUN,
+          onePickPerGame: ONE_PICK_PER_GAME,
         },
       });
     }
@@ -817,6 +854,9 @@ export async function GET(req: NextRequest) {
       edge: c.edge,
       ev: c.ev,
       play_rating: c.play_rating,
+      max_play: c.max_play,
+      pick_type: 'pregame',
+      is_live: false,
     }));
 
     const { data, error } = await supabase
