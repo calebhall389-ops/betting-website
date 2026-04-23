@@ -22,18 +22,16 @@ const ALLOWED_BOOKS = new Set([
 
 const SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
-// much looser so you actually get a board
 const MIN_BOOKS = 2;
 const MIN_EDGE = 0.75;
 const MIN_EV = 0.75;
 const MAX_PICKS_PER_RUN = 12;
 const ONE_PICK_PER_GAME = true;
-
-// current day + next day window
 const LOOKAHEAD_HOURS = 36;
-
-// allow closer to start
 const MIN_MINUTES_TO_START = 5;
+
+// require at least this many OTHER books after removing best book
+const MIN_CONSENSUS_BOOKS = 2;
 
 // ===============================
 // TYPES
@@ -88,30 +86,36 @@ type Candidate = {
   commence_time: string;
 };
 
+type PriceEntry = {
+  bookKey: string;
+  bookTitle: string;
+  price: number;
+};
+
+type SpreadPriceEntry = {
+  bookKey: string;
+  bookTitle: string;
+  price: number;
+  point: number;
+};
+
+type TotalPriceEntry = {
+  bookKey: string;
+  bookTitle: string;
+  price: number;
+  point: number;
+};
+
 type SideAggregate = {
-  prices: Array<{
-    bookKey: string;
-    bookTitle: string;
-    price: number;
-  }>;
+  prices: PriceEntry[];
 };
 
 type SpreadAggregate = {
-  prices: Array<{
-    bookKey: string;
-    bookTitle: string;
-    price: number;
-    point: number;
-  }>;
+  prices: SpreadPriceEntry[];
 };
 
 type TotalAggregate = {
-  prices: Array<{
-    bookKey: string;
-    bookTitle: string;
-    price: number;
-    point: number;
-  }>;
+  prices: TotalPriceEntry[];
 };
 
 type InsertRow = {
@@ -237,9 +241,9 @@ function getAnalysis(candidate: Candidate): string {
 
   const oddsText = `${candidate.odds > 0 ? '+' : ''}${candidate.odds}`;
 
-  return `${candidate.pick} at ${candidate.sportsbook} is priced at ${oddsText} versus a model fair line of ${fairLineText}. Model probability is ${round2(
+  return `${candidate.pick} at ${candidate.sportsbook} is priced at ${oddsText} versus consensus fair line ${fairLineText}. Consensus model probability is ${round2(
     candidate.model_probability * 100
-  )}% compared with market implied probability of ${round2(
+  )}% versus implied probability ${round2(
     candidate.implied_probability * 100
   )}%. Estimated edge is ${round2(candidate.edge)}% and expected value is ${round2(
     candidate.ev
@@ -271,6 +275,93 @@ async function fetchEventsForSport(sport: string): Promise<OddsEvent[]> {
 
   const data = await fetchJson<OddsEvent[]>(url);
   return Array.isArray(data) ? data : [];
+}
+
+function getBestPrice(entries: PriceEntry[]): PriceEntry | null {
+  if (!entries.length) return null;
+  return [...entries].sort((a, b) => b.price - a.price)[0];
+}
+
+function getBestSpreadPrice(entries: SpreadPriceEntry[]): SpreadPriceEntry | null {
+  if (!entries.length) return null;
+  return [...entries].sort((a, b) => b.price - a.price)[0];
+}
+
+function getBestTotalPrice(entries: TotalPriceEntry[]): TotalPriceEntry | null {
+  if (!entries.length) return null;
+  return [...entries].sort((a, b) => b.price - a.price)[0];
+}
+
+function calcNoVigFromConsensusExcludingBest(
+  sideAEntries: PriceEntry[],
+  sideBEntries: PriceEntry[],
+  excludedBookKey: string
+): { a: number; b: number } | null {
+  const aPrices = sideAEntries
+    .filter((x) => x.bookKey !== excludedBookKey)
+    .map((x) => x.price);
+
+  const bPrices = sideBEntries
+    .filter((x) => x.bookKey !== excludedBookKey)
+    .map((x) => x.price);
+
+  if (aPrices.length < MIN_CONSENSUS_BOOKS || bPrices.length < MIN_CONSENSUS_BOOKS) {
+    return null;
+  }
+
+  const avgAProb = average(aPrices.map(americanToImpliedProb));
+  const avgBProb = average(bPrices.map(americanToImpliedProb));
+
+  return removeVigTwoWay(avgAProb, avgBProb);
+}
+
+function calcNoVigFromSpreadConsensusExcludingBest(
+  sideAEntries: SpreadPriceEntry[],
+  sideBEntries: SpreadPriceEntry[],
+  excludedBookKey: string
+): { a: number; b: number } | null {
+  const aPrices = sideAEntries
+    .filter((x) => x.bookKey !== excludedBookKey)
+    .map((x) => x.price);
+
+  const bPrices = sideBEntries
+    .filter((x) => x.bookKey !== excludedBookKey)
+    .map((x) => x.price);
+
+  if (aPrices.length < MIN_CONSENSUS_BOOKS || bPrices.length < MIN_CONSENSUS_BOOKS) {
+    return null;
+  }
+
+  const avgAProb = average(aPrices.map(americanToImpliedProb));
+  const avgBProb = average(bPrices.map(americanToImpliedProb));
+
+  return removeVigTwoWay(avgAProb, avgBProb);
+}
+
+function calcNoVigFromTotalConsensusExcludingBest(
+  overEntries: TotalPriceEntry[],
+  underEntries: TotalPriceEntry[],
+  excludedBookKey: string
+): { a: number; b: number } | null {
+  const overPrices = overEntries
+    .filter((x) => x.bookKey !== excludedBookKey)
+    .map((x) => x.price);
+
+  const underPrices = underEntries
+    .filter((x) => x.bookKey !== excludedBookKey)
+    .map((x) => x.price);
+
+  if (
+    overPrices.length < MIN_CONSENSUS_BOOKS ||
+    underPrices.length < MIN_CONSENSUS_BOOKS
+  ) {
+    return null;
+  }
+
+  const avgOverProb = average(overPrices.map(americanToImpliedProb));
+  const avgUnderProb = average(underPrices.map(americanToImpliedProb));
+
+  return removeVigTwoWay(avgOverProb, avgUnderProb);
 }
 
 // ===============================
@@ -306,25 +397,28 @@ function buildMoneylineCandidates(event: OddsEvent): Candidate[] {
   const away = event.away_team;
 
   if (!sides[home] || !sides[away]) return [];
-
-  const homePrices = sides[home].prices.map((x) => x.price);
-  const awayPrices = sides[away].prices.map((x) => x.price);
-
-  if (homePrices.length < MIN_BOOKS || awayPrices.length < MIN_BOOKS) return [];
-
-  const avgHomeProb = average(homePrices.map(americanToImpliedProb));
-  const avgAwayProb = average(awayPrices.map(americanToImpliedProb));
-  const noVig = removeVigTwoWay(avgHomeProb, avgAwayProb);
+  if (sides[home].prices.length < MIN_BOOKS || sides[away].prices.length < MIN_BOOKS) {
+    return [];
+  }
 
   const candidates: Candidate[] = [];
 
   for (const team of [home, away]) {
-    const modelProb = team === home ? noVig.a : noVig.b;
+    const oppTeam = team === home ? away : home;
     const entries = sides[team].prices;
+    const oppEntries = sides[oppTeam].prices;
 
-    if (entries.length < MIN_BOOKS) continue;
+    const best = getBestPrice(entries);
+    if (!best) continue;
 
-    const best = [...entries].sort((a, b) => b.price - a.price)[0];
+    const consensus = calcNoVigFromConsensusExcludingBest(
+      entries,
+      oppEntries,
+      best.bookKey
+    );
+    if (!consensus) continue;
+
+    const modelProb = team === home ? consensus.a : consensus.b;
     const implied = americanToImpliedProb(best.price);
     const edge = (modelProb - implied) * 100;
     const ev = expectedValuePercent(modelProb, best.price);
@@ -373,10 +467,7 @@ function buildSpreadCandidates(event: OddsEvent): Candidate[] {
     if (!market?.outcomes?.length || market.outcomes.length < 2) continue;
 
     for (const outcome of market.outcomes) {
-      if (
-        typeof outcome.price !== 'number' ||
-        typeof outcome.point !== 'number'
-      ) {
+      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') {
         continue;
       }
 
@@ -407,19 +498,19 @@ function buildSpreadCandidates(event: OddsEvent): Candidate[] {
       team === event.home_team ? event.away_team : event.home_team;
     const oppositeKey = `${oppositeTeam}|${-point}`;
     const opposite = spreads[oppositeKey];
-
     if (!opposite || opposite.prices.length < MIN_BOOKS) continue;
 
-    const avgProbA = average(
-      aggregate.prices.map((x) => americanToImpliedProb(x.price))
-    );
-    const avgProbB = average(
-      opposite.prices.map((x) => americanToImpliedProb(x.price))
-    );
-    const noVig = removeVigTwoWay(avgProbA, avgProbB);
+    const best = getBestSpreadPrice(aggregate.prices);
+    if (!best) continue;
 
-    const modelProb = noVig.a;
-    const best = [...aggregate.prices].sort((a, b) => b.price - a.price)[0];
+    const consensus = calcNoVigFromSpreadConsensusExcludingBest(
+      aggregate.prices,
+      opposite.prices,
+      best.bookKey
+    );
+    if (!consensus) continue;
+
+    const modelProb = consensus.a;
     const implied = americanToImpliedProb(best.price);
     const edge = (modelProb - implied) * 100;
     const ev = expectedValuePercent(modelProb, best.price);
@@ -470,10 +561,7 @@ function buildTotalCandidates(event: OddsEvent): Candidate[] {
     if (!market?.outcomes?.length || market.outcomes.length < 2) continue;
 
     for (const outcome of market.outcomes) {
-      if (
-        typeof outcome.price !== 'number' ||
-        typeof outcome.point !== 'number'
-      ) {
+      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') {
         continue;
       }
 
@@ -517,19 +605,19 @@ function buildTotalCandidates(event: OddsEvent): Candidate[] {
       continue;
     }
 
-    const avgOverProb = average(
-      over.prices.map((x) => americanToImpliedProb(x.price))
-    );
-    const avgUnderProb = average(
-      under.prices.map((x) => americanToImpliedProb(x.price))
-    );
-    const noVig = removeVigTwoWay(avgOverProb, avgUnderProb);
-
     for (const side of ['Over', 'Under'] as const) {
       const aggregate = side === 'Over' ? over : under;
-      const modelProb = side === 'Over' ? noVig.a : noVig.b;
+      const best = getBestTotalPrice(aggregate.prices);
+      if (!best) continue;
 
-      const best = [...aggregate.prices].sort((a, b) => b.price - a.price)[0];
+      const consensus = calcNoVigFromTotalConsensusExcludingBest(
+        over.prices,
+        under.prices,
+        best.bookKey
+      );
+      if (!consensus) continue;
+
+      const modelProb = side === 'Over' ? consensus.a : consensus.b;
       const implied = americanToImpliedProb(best.price);
       const edge = (modelProb - implied) * 100;
       const ev = expectedValuePercent(modelProb, best.price);
@@ -683,6 +771,7 @@ export async function GET(req: NextRequest) {
           candidatesFound,
           finalSelected: 0,
           minBooks: MIN_BOOKS,
+          minConsensusBooks: MIN_CONSENSUS_BOOKS,
           minEdge: MIN_EDGE,
           minEv: MIN_EV,
           maxPicksPerRun: MAX_PICKS_PER_RUN,
@@ -751,6 +840,7 @@ export async function GET(req: NextRequest) {
         candidatesFound,
         finalSelected: finalCandidates.length,
         minBooks: MIN_BOOKS,
+        minConsensusBooks: MIN_CONSENSUS_BOOKS,
         minEdge: MIN_EDGE,
         minEv: MIN_EV,
         maxPicksPerRun: MAX_PICKS_PER_RUN,
