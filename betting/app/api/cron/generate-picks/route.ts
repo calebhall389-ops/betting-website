@@ -34,11 +34,11 @@ const ONE_PICK_PER_GAME = true;
 const LOOKAHEAD_HOURS = 36;
 const MIN_MINUTES_TO_START = 5;
 
-// stronger sanity filters
-const MAX_REASONABLE_EDGE = 18;
-const MAX_REASONABLE_EV = 20;
-const MAX_REASONABLE_DOG_PROB = 0.68;
-const MAX_REASONABLE_DOG_ODDS = 180;
+// tighter elite sanity filters
+const MAX_REASONABLE_EDGE = 12;
+const MAX_REASONABLE_EV = 15;
+const MAX_REASONABLE_DOG_PROB = 0.66;
+const MAX_REASONABLE_DOG_ODDS = 170;
 
 // stale / market movement controls
 const STALE_DROP_EDGE = 0.75;
