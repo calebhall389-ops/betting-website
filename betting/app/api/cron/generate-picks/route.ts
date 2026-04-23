@@ -305,7 +305,11 @@ function formatAmerican(odds: number): string {
   return odds > 0 ? `+${odds}` : `${odds}`;
 }
 
-function getPlayRating(edge: number, ev: number, favorableMovement: boolean): PlayRating | null {
+function getPlayRating(
+  edge: number,
+  ev: number,
+  favorableMovement: boolean
+): PlayRating | null {
   if (edge >= 5 && ev >= 8 && favorableMovement) return 'MAX';
   if (edge >= 3.5 && ev >= 5) return 'A';
   if (edge >= 2 && ev >= 2.5) return 'B';
@@ -475,7 +479,7 @@ async function fetchExistingPregamePicks(): Promise<Map<string, ExistingPickRow>
   }
 
   const map = new Map<string, ExistingPickRow>();
-  for (const row of (data ?? []) as ExistingPickRow[]) {
+  for (const row of ((data ?? []) as ExistingPickRow[])) {
     map.set(buildExistingPickKey(row), row);
   }
 
@@ -578,8 +582,7 @@ function buildMoneylineCandidates(
     };
 
     const existing = existingPicks.get(buildCandidateKey(baseCandidate));
-    const previousOdds =
-      typeof existing?.odds === 'number' ? existing.odds : null;
+    const previousOdds = typeof existing?.odds === 'number' ? existing.odds : null;
 
     const lineMovement = movementForOdds(best.price, previousOdds);
     const favorableMovement = isFavorableMovement(lineMovement);
@@ -707,8 +710,7 @@ function buildSpreadCandidates(
     };
 
     const existing = existingPicks.get(buildCandidateKey(baseCandidate));
-    const previousOdds =
-      typeof existing?.odds === 'number' ? existing.odds : null;
+    const previousOdds = typeof existing?.odds === 'number' ? existing.odds : null;
 
     const lineMovement = movementForOdds(best.price, previousOdds);
     const favorableMovement = isFavorableMovement(lineMovement);
@@ -847,8 +849,7 @@ function buildTotalCandidates(
       };
 
       const existing = existingPicks.get(buildCandidateKey(baseCandidate));
-      const previousOdds =
-        typeof existing?.odds === 'number' ? existing.odds : null;
+      const previousOdds = typeof existing?.odds === 'number' ? existing.odds : null;
 
       const lineMovement = movementForOdds(best.price, previousOdds);
       const favorableMovement = isFavorableMovement(lineMovement);
@@ -967,11 +968,10 @@ export async function GET(req: NextRequest) {
 
     finalCandidates = finalCandidates.slice(0, MAX_PICKS_PER_RUN);
 
-    // drop stale picks from current board if they no longer qualify
     const finalKeys = new Set(finalCandidates.map(buildCandidateKey));
     const staleIds: string[] = [];
 
-    for (const [key, row] of existingPicks.entries()) {
+    for (const [key, row] of Array.from(existingPicks.entries())) {
       const stillOnBoard = finalKeys.has(key);
       const rowEdge = typeof row.edge === 'number' ? row.edge : null;
       const rowEv = typeof row.ev === 'number' ? row.ev : null;
@@ -1005,7 +1005,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // fresh rebuild of active board
     const { error: deleteError } = await supabase
       .from('picks')
       .delete()
