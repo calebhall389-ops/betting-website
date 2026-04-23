@@ -22,11 +22,11 @@ const ALLOWED_BOOKS = new Set([
 
 const SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
-// qualification
+// core qualification
 const MIN_BOOKS = 2;
 const MIN_CONSENSUS_BOOKS = 2;
-const MIN_EDGE = 0.75;
-const MIN_EV = 0.75;
+const MIN_EDGE = 1.0;
+const MIN_EV = 1.0;
 
 // board controls
 const MAX_PICKS_PER_RUN = 12;
@@ -34,11 +34,27 @@ const ONE_PICK_PER_GAME = true;
 const LOOKAHEAD_HOURS = 36;
 const MIN_MINUTES_TO_START = 5;
 
-// sanity filters to remove fake broken edges
-const MAX_REASONABLE_EDGE = 25;
-const MAX_REASONABLE_EV = 40;
-const MAX_REASONABLE_DOG_PROB = 0.72;
-const MAX_REASONABLE_DOG_ODDS = 200;
+// stronger sanity filters
+const MAX_REASONABLE_EDGE = 18;
+const MAX_REASONABLE_EV = 20;
+const MAX_REASONABLE_DOG_PROB = 0.68;
+const MAX_REASONABLE_DOG_ODDS = 180;
+
+// stale / market movement controls
+const STALE_DROP_EDGE = 0.75;
+const STALE_DROP_EV = 0.75;
+
+// sportsbook weighting
+const BOOK_WEIGHTS: Record<string, number> = {
+  fanduel: 1.0,
+  draftkings: 1.0,
+  betmgm: 1.0,
+  caesars: 0.95,
+  betrivers: 0.92,
+  espnbet: 0.9,
+  fanatics: 0.88,
+  thescorebet: 0.88,
+};
 
 // ===============================
 // TYPES
@@ -104,6 +120,32 @@ type TotalAggregate = {
 
 type PlayRating = 'MAX' | 'A' | 'B' | 'C';
 
+type PickStatus = 'pregame';
+
+type ExistingPickRow = {
+  id: string;
+  game: string | null;
+  pick: string | null;
+  odds: number | null;
+  previous_odds?: number | null;
+  best_odds?: number | null;
+  edge?: number | null;
+  ev?: number | null;
+  play_rating?: string | null;
+  max_play?: boolean | null;
+  sportsbook?: string | null;
+  sportsbook_key?: string | null;
+  market_type?: string | null;
+  market_key?: string | null;
+  selection_name?: string | null;
+  commence_time?: string | null;
+  status?: string | null;
+  result?: string | null;
+  line_movement?: string | null;
+  odds_last_seen_at?: string | null;
+  event_id?: string | null;
+};
+
 type Candidate = {
   sport: string;
   game: string;
@@ -123,9 +165,19 @@ type Candidate = {
   edge: number;
   ev: number;
   play_rating: PlayRating;
-  status: 'pregame';
+  status: PickStatus;
   commence_time: string;
   max_play: boolean;
+  pick_type: 'pregame';
+  is_live: false;
+  event_id: string;
+  best_odds: number;
+  previous_odds: number | null;
+  closing_odds: number | null;
+  clv: number | null;
+  odds_last_seen_at: string;
+  line_movement: string | null;
+  mode: 'elite';
 };
 
 type InsertRow = {
@@ -153,6 +205,14 @@ type InsertRow = {
   max_play: boolean;
   pick_type: string;
   is_live: boolean;
+  event_id: string;
+  best_odds: number;
+  previous_odds: number | null;
+  closing_odds: number | null;
+  clv: number | null;
+  odds_last_seen_at: string;
+  line_movement: string | null;
+  mode: string;
 };
 
 // ===============================
@@ -201,13 +261,24 @@ function removeVigTwoWay(probA: number, probB: number) {
   };
 }
 
-function average(nums: number[]): number {
-  if (!nums.length) return 0;
-  return nums.reduce((sum, n) => sum + n, 0) / nums.length;
-}
-
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function weightedAverageImpliedProb(
+  prices: Array<{ bookKey: string; price: number }>
+): number {
+  let weightedSum = 0;
+  let totalWeight = 0;
+
+  for (const entry of prices) {
+    const weight = BOOK_WEIGHTS[entry.bookKey] ?? 0.85;
+    weightedSum += americanToImpliedProb(entry.price) * weight;
+    totalWeight += weight;
+  }
+
+  if (totalWeight <= 0) return 0;
+  return weightedSum / totalWeight;
 }
 
 function sportLabel(sportKey: string): string {
@@ -227,7 +298,6 @@ function isWithinWindow(commenceTime: string): boolean {
   const diffMs = start - now;
   const diffHours = diffMs / 1000 / 60 / 60;
   const diffMinutes = diffMs / 1000 / 60;
-
   return diffHours <= LOOKAHEAD_HOURS && diffMinutes >= MIN_MINUTES_TO_START;
 }
 
@@ -235,11 +305,11 @@ function formatAmerican(odds: number): string {
   return odds > 0 ? `+${odds}` : `${odds}`;
 }
 
-function getPlayRating(edge: number, ev: number): PlayRating | null {
-  if (edge >= 6 && ev >= 10) return 'MAX';
-  if (edge >= 4 && ev >= 6) return 'A';
-  if (edge >= 2 && ev >= 2) return 'B';
-  if (edge >= 0.75 && ev >= 0.75) return 'C';
+function getPlayRating(edge: number, ev: number, favorableMovement: boolean): PlayRating | null {
+  if (edge >= 5 && ev >= 8 && favorableMovement) return 'MAX';
+  if (edge >= 3.5 && ev >= 5) return 'A';
+  if (edge >= 2 && ev >= 2.5) return 'B';
+  if (edge >= 1 && ev >= 1) return 'C';
   return null;
 }
 
@@ -271,21 +341,42 @@ function passesSanityFilters(
   return true;
 }
 
+function movementForOdds(currentOdds: number, previousOdds: number | null): string | null {
+  if (previousOdds === null || previousOdds === currentOdds) return null;
+
+  const currentProb = americanToImpliedProb(currentOdds);
+  const previousProb = americanToImpliedProb(previousOdds);
+
+  if (currentProb > previousProb + 0.003) return 'toward_pick';
+  if (currentProb < previousProb - 0.003) return 'away_from_pick';
+  return 'flat';
+}
+
+function isFavorableMovement(lineMovement: string | null): boolean {
+  return lineMovement === 'toward_pick' || lineMovement === null || lineMovement === 'flat';
+}
+
 function buildAnalysis(candidate: Candidate): string {
   const fairText =
     candidate.fair_line !== null ? formatAmerican(candidate.fair_line) : 'N/A';
 
   const ratingText = candidate.max_play ? 'MAX PLAY' : `${candidate.play_rating} PLAY`;
+  const movementText =
+    candidate.line_movement === 'toward_pick'
+      ? ' Market is moving toward this side.'
+      : candidate.line_movement === 'away_from_pick'
+      ? ' Market has moved slightly against this side.'
+      : '';
 
   return `${candidate.pick} at ${candidate.sportsbook} is available at ${formatAmerican(
     candidate.odds
-  )} versus a consensus fair line of ${fairText}. Consensus win probability is ${round2(
+  )} versus a weighted consensus fair line of ${fairText}. Consensus win probability is ${round2(
     candidate.model_probability * 100
   )}% versus implied probability ${round2(
     candidate.implied_probability * 100
   )}%. Estimated edge is ${round2(candidate.edge)}% with expected value of ${round2(
     candidate.ev
-  )}%. Rating: ${ratingText}.`;
+  )}%. Rating: ${ratingText}.${movementText}`;
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -330,82 +421,75 @@ function getBestTotalPrice(entries: TotalPriceEntry[]): TotalPriceEntry | null {
   return [...entries].sort((a, b) => b.price - a.price)[0];
 }
 
-function calcNoVigFromConsensusExcludingBest(
-  sideAEntries: PriceEntry[],
-  sideBEntries: PriceEntry[],
+function calcWeightedNoVigExcludingBest(
+  sideAEntries: Array<{ bookKey: string; price: number }>,
+  sideBEntries: Array<{ bookKey: string; price: number }>,
   excludedBookKey: string
 ): { a: number; b: number } | null {
-  const aPrices = sideAEntries
-    .filter((x) => x.bookKey !== excludedBookKey)
-    .map((x) => x.price);
+  const aEntries = sideAEntries.filter((x) => x.bookKey !== excludedBookKey);
+  const bEntries = sideBEntries.filter((x) => x.bookKey !== excludedBookKey);
 
-  const bPrices = sideBEntries
-    .filter((x) => x.bookKey !== excludedBookKey)
-    .map((x) => x.price);
-
-  if (aPrices.length < MIN_CONSENSUS_BOOKS || bPrices.length < MIN_CONSENSUS_BOOKS) {
+  if (aEntries.length < MIN_CONSENSUS_BOOKS || bEntries.length < MIN_CONSENSUS_BOOKS) {
     return null;
   }
 
-  const avgAProb = average(aPrices.map(americanToImpliedProb));
-  const avgBProb = average(bPrices.map(americanToImpliedProb));
+  const avgAProb = weightedAverageImpliedProb(aEntries);
+  const avgBProb = weightedAverageImpliedProb(bEntries);
 
   return removeVigTwoWay(avgAProb, avgBProb);
 }
 
-function calcNoVigFromSpreadConsensusExcludingBest(
-  sideAEntries: SpreadPriceEntry[],
-  sideBEntries: SpreadPriceEntry[],
-  excludedBookKey: string
-): { a: number; b: number } | null {
-  const aPrices = sideAEntries
-    .filter((x) => x.bookKey !== excludedBookKey)
-    .map((x) => x.price);
-
-  const bPrices = sideBEntries
-    .filter((x) => x.bookKey !== excludedBookKey)
-    .map((x) => x.price);
-
-  if (aPrices.length < MIN_CONSENSUS_BOOKS || bPrices.length < MIN_CONSENSUS_BOOKS) {
-    return null;
-  }
-
-  const avgAProb = average(aPrices.map(americanToImpliedProb));
-  const avgBProb = average(bPrices.map(americanToImpliedProb));
-
-  return removeVigTwoWay(avgAProb, avgBProb);
+function buildCandidateKey(candidate: Candidate): string {
+  return [
+    candidate.game,
+    candidate.market_type,
+    candidate.market_key,
+    candidate.selection_name,
+    candidate.pick,
+  ].join('|');
 }
 
-function calcNoVigFromTotalConsensusExcludingBest(
-  overEntries: TotalPriceEntry[],
-  underEntries: TotalPriceEntry[],
-  excludedBookKey: string
-): { a: number; b: number } | null {
-  const overPrices = overEntries
-    .filter((x) => x.bookKey !== excludedBookKey)
-    .map((x) => x.price);
+function buildExistingPickKey(row: ExistingPickRow): string {
+  return [
+    row.game ?? '',
+    row.market_type ?? '',
+    row.market_key ?? '',
+    row.selection_name ?? '',
+    row.pick ?? '',
+  ].join('|');
+}
 
-  const underPrices = underEntries
-    .filter((x) => x.bookKey !== excludedBookKey)
-    .map((x) => x.price);
+async function fetchExistingPregamePicks(): Promise<Map<string, ExistingPickRow>> {
+  const supabase = getSupabase();
 
-  if (
-    overPrices.length < MIN_CONSENSUS_BOOKS ||
-    underPrices.length < MIN_CONSENSUS_BOOKS
-  ) {
-    return null;
+  const { data, error } = await supabase
+    .from('picks')
+    .select(
+      'id, game, pick, odds, previous_odds, best_odds, edge, ev, play_rating, max_play, sportsbook, sportsbook_key, market_type, market_key, selection_name, commence_time, status, result, line_movement, odds_last_seen_at, event_id'
+    )
+    .eq('status', 'pregame')
+    .eq('result', 'pending');
+
+  if (error) {
+    throw new Error(`Failed fetching existing picks: ${error.message}`);
   }
 
-  const avgOverProb = average(overPrices.map(americanToImpliedProb));
-  const avgUnderProb = average(underPrices.map(americanToImpliedProb));
+  const map = new Map<string, ExistingPickRow>();
+  for (const row of (data ?? []) as ExistingPickRow[]) {
+    map.set(buildExistingPickKey(row), row);
+  }
 
-  return removeVigTwoWay(avgOverProb, avgUnderProb);
+  return map;
 }
 
 // ===============================
 // MARKET BUILDERS
 // ===============================
-function buildMoneylineCandidates(event: OddsEvent): Candidate[] {
+function buildMoneylineCandidates(
+  event: OddsEvent,
+  existingPicks: Map<string, ExistingPickRow>,
+  nowIso: string
+): Candidate[] {
   if (!event.bookmakers?.length) return [];
 
   const sides: Record<string, SideAggregate> = {};
@@ -449,11 +533,7 @@ function buildMoneylineCandidates(event: OddsEvent): Candidate[] {
     const best = getBestPrice(entries);
     if (!best) continue;
 
-    const consensus = calcNoVigFromConsensusExcludingBest(
-      entries,
-      oppEntries,
-      best.bookKey
-    );
+    const consensus = calcWeightedNoVigExcludingBest(entries, oppEntries, best.bookKey);
     if (!consensus) continue;
 
     const modelProb = team === home ? consensus.a : consensus.b;
@@ -463,11 +543,7 @@ function buildMoneylineCandidates(event: OddsEvent): Candidate[] {
 
     if (!passesSanityFilters(modelProb, best.price, edge, ev)) continue;
 
-    const rating = getPlayRating(edge, ev);
-    if (!rating) continue;
-    if (edge < MIN_EDGE || ev < MIN_EV) continue;
-
-    candidates.push({
+    const baseCandidate: Candidate = {
       sport: sportLabel(event.sport_key),
       game: normalizeGameKey(event),
       pick: `${team} ML`,
@@ -479,23 +555,60 @@ function buildMoneylineCandidates(event: OddsEvent): Candidate[] {
       sportsbook_key: best.bookKey,
       confidence: Math.round(modelProb * 100),
       analysis: '',
-      stake: getStakeUnits(rating),
+      stake: 0,
       fair_line: probToAmerican(modelProb),
       model_probability: modelProb,
       implied_probability: implied,
       edge: round2(edge),
       ev: round2(ev),
-      play_rating: rating,
+      play_rating: 'C',
       status: 'pregame',
       commence_time: event.commence_time,
+      max_play: false,
+      pick_type: 'pregame',
+      is_live: false,
+      event_id: event.id,
+      best_odds: best.price,
+      previous_odds: null,
+      closing_odds: null,
+      clv: null,
+      odds_last_seen_at: nowIso,
+      line_movement: null,
+      mode: 'elite',
+    };
+
+    const existing = existingPicks.get(buildCandidateKey(baseCandidate));
+    const previousOdds =
+      typeof existing?.odds === 'number' ? existing.odds : null;
+
+    const lineMovement = movementForOdds(best.price, previousOdds);
+    const favorableMovement = isFavorableMovement(lineMovement);
+    const rating = getPlayRating(edge, ev, favorableMovement);
+
+    if (!rating) continue;
+    if (edge < MIN_EDGE || ev < MIN_EV) continue;
+
+    const finalCandidate: Candidate = {
+      ...baseCandidate,
+      previous_odds: previousOdds,
+      line_movement: lineMovement,
+      play_rating: rating,
       max_play: rating === 'MAX',
-    });
+      stake: getStakeUnits(rating),
+    };
+
+    finalCandidate.analysis = buildAnalysis(finalCandidate);
+    candidates.push(finalCandidate);
   }
 
   return candidates;
 }
 
-function buildSpreadCandidates(event: OddsEvent): Candidate[] {
+function buildSpreadCandidates(
+  event: OddsEvent,
+  existingPicks: Map<string, ExistingPickRow>,
+  nowIso: string
+): Candidate[] {
   if (!event.bookmakers?.length) return [];
 
   const spreads: Record<string, SpreadAggregate> = {};
@@ -543,7 +656,7 @@ function buildSpreadCandidates(event: OddsEvent): Candidate[] {
     const best = getBestSpreadPrice(aggregate.prices);
     if (!best) continue;
 
-    const consensus = calcNoVigFromSpreadConsensusExcludingBest(
+    const consensus = calcWeightedNoVigExcludingBest(
       aggregate.prices,
       opposite.prices,
       best.bookKey
@@ -557,13 +670,9 @@ function buildSpreadCandidates(event: OddsEvent): Candidate[] {
 
     if (!passesSanityFilters(modelProb, best.price, edge, ev)) continue;
 
-    const rating = getPlayRating(edge, ev);
-    if (!rating) continue;
-    if (edge < MIN_EDGE || ev < MIN_EV) continue;
-
     const pointText = point > 0 ? `+${point}` : `${point}`;
 
-    candidates.push({
+    const baseCandidate: Candidate = {
       sport: sportLabel(event.sport_key),
       game: normalizeGameKey(event),
       pick: `${team} ${pointText}`,
@@ -575,23 +684,60 @@ function buildSpreadCandidates(event: OddsEvent): Candidate[] {
       sportsbook_key: best.bookKey,
       confidence: Math.round(modelProb * 100),
       analysis: '',
-      stake: getStakeUnits(rating),
+      stake: 0,
       fair_line: probToAmerican(modelProb),
       model_probability: modelProb,
       implied_probability: implied,
       edge: round2(edge),
       ev: round2(ev),
-      play_rating: rating,
+      play_rating: 'C',
       status: 'pregame',
       commence_time: event.commence_time,
+      max_play: false,
+      pick_type: 'pregame',
+      is_live: false,
+      event_id: event.id,
+      best_odds: best.price,
+      previous_odds: null,
+      closing_odds: null,
+      clv: null,
+      odds_last_seen_at: nowIso,
+      line_movement: null,
+      mode: 'elite',
+    };
+
+    const existing = existingPicks.get(buildCandidateKey(baseCandidate));
+    const previousOdds =
+      typeof existing?.odds === 'number' ? existing.odds : null;
+
+    const lineMovement = movementForOdds(best.price, previousOdds);
+    const favorableMovement = isFavorableMovement(lineMovement);
+    const rating = getPlayRating(edge, ev, favorableMovement);
+
+    if (!rating) continue;
+    if (edge < MIN_EDGE || ev < MIN_EV) continue;
+
+    const finalCandidate: Candidate = {
+      ...baseCandidate,
+      previous_odds: previousOdds,
+      line_movement: lineMovement,
+      play_rating: rating,
       max_play: rating === 'MAX',
-    });
+      stake: getStakeUnits(rating),
+    };
+
+    finalCandidate.analysis = buildAnalysis(finalCandidate);
+    candidates.push(finalCandidate);
   }
 
   return candidates;
 }
 
-function buildTotalCandidates(event: OddsEvent): Candidate[] {
+function buildTotalCandidates(
+  event: OddsEvent,
+  existingPicks: Map<string, ExistingPickRow>,
+  nowIso: string
+): Candidate[] {
   if (!event.bookmakers?.length) return [];
 
   const totals: Record<string, TotalAggregate> = {};
@@ -652,7 +798,7 @@ function buildTotalCandidates(event: OddsEvent): Candidate[] {
       const best = getBestTotalPrice(aggregate.prices);
       if (!best) continue;
 
-      const consensus = calcNoVigFromTotalConsensusExcludingBest(
+      const consensus = calcWeightedNoVigExcludingBest(
         over.prices,
         under.prices,
         best.bookKey
@@ -666,11 +812,7 @@ function buildTotalCandidates(event: OddsEvent): Candidate[] {
 
       if (!passesSanityFilters(modelProb, best.price, edge, ev)) continue;
 
-      const rating = getPlayRating(edge, ev);
-      if (!rating) continue;
-      if (edge < MIN_EDGE || ev < MIN_EV) continue;
-
-      candidates.push({
+      const baseCandidate: Candidate = {
         sport: sportLabel(event.sport_key),
         game: normalizeGameKey(event),
         pick: `${side} ${point}`,
@@ -682,17 +824,50 @@ function buildTotalCandidates(event: OddsEvent): Candidate[] {
         sportsbook_key: best.bookKey,
         confidence: Math.round(modelProb * 100),
         analysis: '',
-        stake: getStakeUnits(rating),
+        stake: 0,
         fair_line: probToAmerican(modelProb),
         model_probability: modelProb,
         implied_probability: implied,
         edge: round2(edge),
         ev: round2(ev),
-        play_rating: rating,
+        play_rating: 'C',
         status: 'pregame',
         commence_time: event.commence_time,
+        max_play: false,
+        pick_type: 'pregame',
+        is_live: false,
+        event_id: event.id,
+        best_odds: best.price,
+        previous_odds: null,
+        closing_odds: null,
+        clv: null,
+        odds_last_seen_at: nowIso,
+        line_movement: null,
+        mode: 'elite',
+      };
+
+      const existing = existingPicks.get(buildCandidateKey(baseCandidate));
+      const previousOdds =
+        typeof existing?.odds === 'number' ? existing.odds : null;
+
+      const lineMovement = movementForOdds(best.price, previousOdds);
+      const favorableMovement = isFavorableMovement(lineMovement);
+      const rating = getPlayRating(edge, ev, favorableMovement);
+
+      if (!rating) continue;
+      if (edge < MIN_EDGE || ev < MIN_EV) continue;
+
+      const finalCandidate: Candidate = {
+        ...baseCandidate,
+        previous_odds: previousOdds,
+        line_movement: lineMovement,
+        play_rating: rating,
         max_play: rating === 'MAX',
-      });
+        stake: getStakeUnits(rating),
+      };
+
+      finalCandidate.analysis = buildAnalysis(finalCandidate);
+      candidates.push(finalCandidate);
     }
   }
 
@@ -721,6 +896,8 @@ export async function GET(req: NextRequest) {
     }
 
     const supabase = getSupabase();
+    const existingPicks = await fetchExistingPregamePicks();
+    const nowIso = new Date().toISOString();
 
     let eventsChecked = 0;
     let candidatesFound = 0;
@@ -736,18 +913,11 @@ export async function GET(req: NextRequest) {
 
         eventsChecked++;
 
-        const moneyline = buildMoneylineCandidates(event);
-        const spreads = buildSpreadCandidates(event);
-        const totals = buildTotalCandidates(event);
+        const moneyline = buildMoneylineCandidates(event, existingPicks, nowIso);
+        const spreads = buildSpreadCandidates(event, existingPicks, nowIso);
+        const totals = buildTotalCandidates(event, existingPicks, nowIso);
 
-        const eventCandidates = [...moneyline, ...spreads, ...totals].map(
-          (candidate) => {
-            const next = { ...candidate };
-            next.analysis = buildAnalysis(next);
-            return next;
-          }
-        );
-
+        const eventCandidates = [...moneyline, ...spreads, ...totals];
         candidatesFound += eventCandidates.length;
         allCandidates.push(...eventCandidates);
       }
@@ -797,6 +967,58 @@ export async function GET(req: NextRequest) {
 
     finalCandidates = finalCandidates.slice(0, MAX_PICKS_PER_RUN);
 
+    // drop stale picks from current board if they no longer qualify
+    const finalKeys = new Set(finalCandidates.map(buildCandidateKey));
+    const staleIds: string[] = [];
+
+    for (const [key, row] of existingPicks.entries()) {
+      const stillOnBoard = finalKeys.has(key);
+      const rowEdge = typeof row.edge === 'number' ? row.edge : null;
+      const rowEv = typeof row.ev === 'number' ? row.ev : null;
+
+      if (!stillOnBoard) {
+        staleIds.push(row.id);
+        continue;
+      }
+
+      if (
+        row.line_movement === 'away_from_pick' &&
+        rowEdge !== null &&
+        rowEv !== null &&
+        (rowEdge < STALE_DROP_EDGE || rowEv < STALE_DROP_EV)
+      ) {
+        staleIds.push(row.id);
+      }
+    }
+
+    if (staleIds.length) {
+      const { error: staleDeleteError } = await supabase
+        .from('picks')
+        .delete()
+        .in('id', staleIds);
+
+      if (staleDeleteError) {
+        return NextResponse.json(
+          { success: false, error: `Failed deleting stale picks: ${staleDeleteError.message}` },
+          { status: 500 }
+        );
+      }
+    }
+
+    // fresh rebuild of active board
+    const { error: deleteError } = await supabase
+      .from('picks')
+      .delete()
+      .eq('status', 'pregame')
+      .eq('result', 'pending');
+
+    if (deleteError) {
+      return NextResponse.json(
+        { success: false, error: `Failed clearing old picks: ${deleteError.message}` },
+        { status: 500 }
+      );
+    }
+
     if (!finalCandidates.length) {
       return NextResponse.json({
         success: true,
@@ -812,24 +1034,9 @@ export async function GET(req: NextRequest) {
           minEv: MIN_EV,
           maxPicksPerRun: MAX_PICKS_PER_RUN,
           onePickPerGame: ONE_PICK_PER_GAME,
+          staleRemoved: staleIds.length,
         },
       });
-    }
-
-    const { error: deleteError } = await supabase
-      .from('picks')
-      .delete()
-      .eq('status', 'pregame')
-      .eq('result', 'pending');
-
-    if (deleteError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Failed clearing old picks: ${deleteError.message}`,
-        },
-        { status: 500 }
-      );
     }
 
     const rows: InsertRow[] = finalCandidates.map((c) => ({
@@ -855,8 +1062,16 @@ export async function GET(req: NextRequest) {
       ev: c.ev,
       play_rating: c.play_rating,
       max_play: c.max_play,
-      pick_type: 'pregame',
-      is_live: false,
+      pick_type: c.pick_type,
+      is_live: c.is_live,
+      event_id: c.event_id,
+      best_odds: c.best_odds,
+      previous_odds: c.previous_odds,
+      closing_odds: c.closing_odds,
+      clv: c.clv,
+      odds_last_seen_at: c.odds_last_seen_at,
+      line_movement: c.line_movement,
+      mode: c.mode,
     }));
 
     const { data, error } = await supabase
@@ -885,6 +1100,7 @@ export async function GET(req: NextRequest) {
         minEv: MIN_EV,
         maxPicksPerRun: MAX_PICKS_PER_RUN,
         onePickPerGame: ONE_PICK_PER_GAME,
+        staleRemoved: staleIds.length,
       },
     });
   } catch (error) {
