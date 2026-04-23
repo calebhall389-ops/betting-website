@@ -22,18 +22,18 @@ const ALLOWED_BOOKS = new Set([
 
 const SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
-// loosened up for more volume
+// much looser so you actually get a board
 const MIN_BOOKS = 2;
-const MIN_EDGE = 1.5;
-const MIN_EV = 1.5;
-const MAX_PICKS_PER_RUN = 10;
+const MIN_EDGE = 0.75;
+const MIN_EV = 0.75;
+const MAX_PICKS_PER_RUN = 12;
 const ONE_PICK_PER_GAME = true;
 
 // current day + next day window
 const LOOKAHEAD_HOURS = 36;
 
-// allow a little closer to start time
-const MIN_MINUTES_TO_START = 10;
+// allow closer to start
+const MIN_MINUTES_TO_START = 5;
 
 // ===============================
 // TYPES
@@ -79,8 +79,8 @@ type Candidate = {
   analysis: string;
   stake: number;
   fair_line: number | null;
-  model_probability: number; // 0-1
-  implied_probability: number; // 0-1
+  model_probability: number;
+  implied_probability: number;
   edge: number;
   ev: number;
   play_rating: 'A' | 'B' | 'C';
@@ -196,16 +196,16 @@ function round2(n: number): number {
 }
 
 function getPlayRating(edge: number, ev: number): 'A' | 'B' | 'C' | null {
-  if (edge >= 5 && ev >= 8) return 'A';
-  if (edge >= 2.75 && ev >= 4) return 'B';
-  if (edge >= 1.5 && ev >= 1.5) return 'C';
+  if (edge >= 4 && ev >= 6) return 'A';
+  if (edge >= 2 && ev >= 2) return 'B';
+  if (edge >= 0.75 && ev >= 0.75) return 'C';
   return null;
 }
 
 function getStakeUnits(rating: 'A' | 'B' | 'C'): number {
   if (rating === 'A') return 1.5;
   if (rating === 'B') return 1.0;
-  return 1.0;
+  return 0.75;
 }
 
 function sportLabel(sportKey: string): string {
@@ -225,6 +225,7 @@ function isWithinWindow(commenceTime: string): boolean {
   const diffMs = start - now;
   const diffHours = diffMs / 1000 / 60 / 60;
   const diffMinutes = diffMs / 1000 / 60;
+
   return diffHours <= LOOKAHEAD_HOURS && diffMinutes >= MIN_MINUTES_TO_START;
 }
 
@@ -591,7 +592,6 @@ export async function GET(req: NextRequest) {
 
     let eventsChecked = 0;
     let candidatesFound = 0;
-
     const allCandidates: Candidate[] = [];
 
     for (const sport of SPORTS) {
