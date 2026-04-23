@@ -20,11 +20,7 @@ const ALLOWED_BOOKS = new Set([
   'thescorebet',
 ]);
 
-const SPORTS = [
-  'baseball_mlb',
-  'basketball_nba',
-  'icehockey_nhl',
-];
+const SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
 const MIN_BOOKS = 2;
 const MIN_EDGE = 2.25;
@@ -32,7 +28,7 @@ const MIN_EV = 3.0;
 const MAX_PICKS_PER_RUN = 8;
 const ONE_PICK_PER_GAME = true;
 
-// only current day + next day
+// current day + next day window
 const LOOKAHEAD_HOURS = 36;
 
 // ignore games starting too soon
@@ -82,8 +78,8 @@ type Candidate = {
   analysis: string;
   stake: number;
   fair_line: number | null;
-  model_probability: number;
-  implied_probability: number;
+  model_probability: number; // 0-1
+  implied_probability: number; // 0-1
   edge: number;
   ev: number;
   play_rating: 'A' | 'B' | 'C';
@@ -191,7 +187,7 @@ function removeVigTwoWay(probA: number, probB: number) {
 
 function average(nums: number[]): number {
   if (!nums.length) return 0;
-  return nums.reduce((a, b) => a + b, 0) / nums.length;
+  return nums.reduce((sum, n) => sum + n, 0) / nums.length;
 }
 
 function round2(n: number): number {
@@ -250,9 +246,7 @@ function getAnalysis(candidate: Candidate): string {
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-    },
+    headers: { Accept: 'application/json' },
     cache: 'no-store',
   });
 
@@ -318,7 +312,6 @@ function buildMoneylineCandidates(event: OddsEvent): Candidate[] {
 
   const avgHomeProb = average(homePrices.map(americanToImpliedProb));
   const avgAwayProb = average(awayPrices.map(americanToImpliedProb));
-
   const noVig = removeVigTwoWay(avgHomeProb, avgAwayProb);
 
   const candidates: Candidate[] = [];
@@ -339,12 +332,10 @@ function buildMoneylineCandidates(event: OddsEvent): Candidate[] {
     if (!rating) continue;
     if (edge < MIN_EDGE || ev < MIN_EV) continue;
 
-    const pickLabel = `${team} ML`;
-
     candidates.push({
       sport: sportLabel(event.sport_key),
       game: normalizeGameKey(event),
-      pick: pickLabel,
+      pick: `${team} ML`,
       market_type: 'moneyline',
       market_key: 'h2h',
       selection_name: team,
@@ -380,7 +371,10 @@ function buildSpreadCandidates(event: OddsEvent): Candidate[] {
     if (!market?.outcomes?.length || market.outcomes.length < 2) continue;
 
     for (const outcome of market.outcomes) {
-      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') {
+      if (
+        typeof outcome.price !== 'number' ||
+        typeof outcome.point !== 'number'
+      ) {
         continue;
       }
 
@@ -407,12 +401,19 @@ function buildSpreadCandidates(event: OddsEvent): Candidate[] {
 
     if (aggregate.prices.length < MIN_BOOKS) continue;
 
-    const oppositeKey = `${team === event.home_team ? event.away_team : event.home_team}|${-point}`;
+    const oppositeTeam =
+      team === event.home_team ? event.away_team : event.home_team;
+    const oppositeKey = `${oppositeTeam}|${-point}`;
     const opposite = spreads[oppositeKey];
+
     if (!opposite || opposite.prices.length < MIN_BOOKS) continue;
 
-    const avgProbA = average(aggregate.prices.map((x) => americanToImpliedProb(x.price)));
-    const avgProbB = average(opposite.prices.map((x) => americanToImpliedProb(x.price)));
+    const avgProbA = average(
+      aggregate.prices.map((x) => americanToImpliedProb(x.price))
+    );
+    const avgProbB = average(
+      opposite.prices.map((x) => americanToImpliedProb(x.price))
+    );
     const noVig = removeVigTwoWay(avgProbA, avgProbB);
 
     const modelProb = noVig.a;
@@ -467,7 +468,10 @@ function buildTotalCandidates(event: OddsEvent): Candidate[] {
     if (!market?.outcomes?.length || market.outcomes.length < 2) continue;
 
     for (const outcome of market.outcomes) {
-      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') {
+      if (
+        typeof outcome.price !== 'number' ||
+        typeof outcome.point !== 'number'
+      ) {
         continue;
       }
 
@@ -487,14 +491,20 @@ function buildTotalCandidates(event: OddsEvent): Candidate[] {
   }
 
   const candidates: Candidate[] = [];
-
   const seenPoints = new Set<number>();
+
   for (const key of Object.keys(totals)) {
-    const [, pointStr] = key.split('|');
-    seenPoints.add(Number(pointStr));
+    const parts = key.split('|');
+    if (parts.length < 2) continue;
+
+    const point = Number(parts[1]);
+    if (!Number.isNaN(point)) {
+      seenPoints.add(point);
+    }
   }
 
-  for (const point of seenPoints) {
+  // FIX: Array.from() avoids Set iteration build issue
+  for (const point of Array.from(seenPoints)) {
     const overKey = `Over|${point}`;
     const underKey = `Under|${point}`;
 
@@ -502,10 +512,16 @@ function buildTotalCandidates(event: OddsEvent): Candidate[] {
     const under = totals[underKey];
 
     if (!over || !under) continue;
-    if (over.prices.length < MIN_BOOKS || under.prices.length < MIN_BOOKS) continue;
+    if (over.prices.length < MIN_BOOKS || under.prices.length < MIN_BOOKS) {
+      continue;
+    }
 
-    const avgOverProb = average(over.prices.map((x) => americanToImpliedProb(x.price)));
-    const avgUnderProb = average(under.prices.map((x) => americanToImpliedProb(x.price)));
+    const avgOverProb = average(
+      over.prices.map((x) => americanToImpliedProb(x.price))
+    );
+    const avgUnderProb = average(
+      under.prices.map((x) => americanToImpliedProb(x.price))
+    );
     const noVig = removeVigTwoWay(avgOverProb, avgUnderProb);
 
     for (const side of ['Over', 'Under'] as const) {
@@ -591,23 +607,26 @@ export async function GET(req: NextRequest) {
         const spreads = buildSpreadCandidates(event);
         const totals = buildTotalCandidates(event);
 
-        const eventCandidates = [...moneyline, ...spreads, ...totals].map((c) => {
-          const withAnalysis = { ...c };
-          withAnalysis.analysis = getAnalysis(withAnalysis);
-          return withAnalysis;
-        });
+        const eventCandidates = [...moneyline, ...spreads, ...totals].map(
+          (candidate) => {
+            const next = { ...candidate };
+            next.analysis = getAnalysis(next);
+            return next;
+          }
+        );
 
         candidatesFound += eventCandidates.length;
         allCandidates.push(...eventCandidates);
       }
     }
 
-    // sort strongest first
     allCandidates.sort((a, b) => {
-      if (b.play_rating !== a.play_rating) {
-        const rank = { A: 3, B: 2, C: 1 };
+      const rank = { A: 3, B: 2, C: 1 };
+
+      if (rank[b.play_rating] !== rank[a.play_rating]) {
         return rank[b.play_rating] - rank[a.play_rating];
       }
+
       if (b.ev !== a.ev) return b.ev - a.ev;
       return b.edge - a.edge;
     });
@@ -616,32 +635,37 @@ export async function GET(req: NextRequest) {
 
     if (ONE_PICK_PER_GAME) {
       const bestByGame = new Map<string, Candidate>();
+      const rank = { A: 3, B: 2, C: 1 };
 
-      for (const c of allCandidates) {
-        const existing = bestByGame.get(c.game);
+      for (const candidate of allCandidates) {
+        const existing = bestByGame.get(candidate.game);
+
         if (!existing) {
-          bestByGame.set(c.game, c);
+          bestByGame.set(candidate.game, candidate);
           continue;
         }
 
-        const rank = { A: 3, B: 2, C: 1 };
-        const currentRank = rank[c.play_rating];
+        const currentRank = rank[candidate.play_rating];
         const existingRank = rank[existing.play_rating];
 
         if (
           currentRank > existingRank ||
-          (currentRank === existingRank && c.ev > existing.ev) ||
-          (currentRank === existingRank && c.ev === existing.ev && c.edge > existing.edge)
+          (currentRank === existingRank && candidate.ev > existing.ev) ||
+          (currentRank === existingRank &&
+            candidate.ev === existing.ev &&
+            candidate.edge > existing.edge)
         ) {
-          bestByGame.set(c.game, c);
+          bestByGame.set(candidate.game, candidate);
         }
       }
 
       finalCandidates = Array.from(bestByGame.values()).sort((a, b) => {
-        const rank = { A: 3, B: 2, C: 1 };
-        if (rank[b.play_rating] !== rank[a.play_rating]) {
-          return rank[b.play_rating] - rank[a.play_rating];
+        const rankMap = { A: 3, B: 2, C: 1 };
+
+        if (rankMap[b.play_rating] !== rankMap[a.play_rating]) {
+          return rankMap[b.play_rating] - rankMap[a.play_rating];
         }
+
         if (b.ev !== a.ev) return b.ev - a.ev;
         return b.edge - a.edge;
       });
@@ -666,7 +690,6 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // remove old pending pregame picks first so board stays fresh
     const { error: deleteError } = await supabase
       .from('picks')
       .delete()
@@ -675,7 +698,10 @@ export async function GET(req: NextRequest) {
 
     if (deleteError) {
       return NextResponse.json(
-        { success: false, error: `Failed clearing old picks: ${deleteError.message}` },
+        {
+          success: false,
+          error: `Failed clearing old picks: ${deleteError.message}`,
+        },
         { status: 500 }
       );
     }
