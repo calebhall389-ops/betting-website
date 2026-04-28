@@ -17,18 +17,19 @@ export default function LocalGameTime({ value }: Props) {
 
     const date = new Date(value);
 
-    // Handle invalid date
     if (isNaN(date.getTime())) {
       setTime('—');
       return;
     }
 
     const formatted = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Phoenix', // ✅ FIX
       month: 'short',
       day: 'numeric',
       year: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
+      hour12: true, // optional but cleaner
     }).format(date);
 
     setTime(formatted);
