@@ -22,29 +22,24 @@ const ALLOWED_BOOKS = new Set([
 
 const SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
-// core qualification
 const MIN_BOOKS = 2;
 const MIN_CONSENSUS_BOOKS = 2;
 const MIN_EDGE = 1.0;
 const MIN_EV = 1.0;
 
-// board controls
 const MAX_PICKS_PER_RUN = 12;
 const ONE_PICK_PER_GAME = true;
 const LOOKAHEAD_HOURS = 36;
 const MIN_MINUTES_TO_START = 5;
 
-// tighter elite sanity filters
 const MAX_REASONABLE_EDGE = 12;
 const MAX_REASONABLE_EV = 15;
 const MAX_REASONABLE_DOG_PROB = 0.66;
 const MAX_REASONABLE_DOG_ODDS = 170;
 
-// stale / market movement controls
 const STALE_DROP_EDGE = 0.75;
 const STALE_DROP_EV = 0.75;
 
-// sportsbook weighting
 const BOOK_WEIGHTS: Record<string, number> = {
   fanduel: 1.0,
   draftkings: 1.0,
@@ -119,7 +114,6 @@ type TotalAggregate = {
 };
 
 type PlayRating = 'MAX' | 'A' | 'B' | 'C';
-
 type PickStatus = 'pregame';
 
 type ExistingPickRow = {
@@ -141,7 +135,6 @@ type ExistingPickRow = {
   commence_time?: string | null;
   status?: string | null;
   result?: string | null;
-  line_movement?: string | null;
   odds_last_seen_at?: string | null;
   event_id?: string | null;
 };
@@ -211,7 +204,6 @@ type InsertRow = {
   closing_odds: number | null;
   clv: number | null;
   odds_last_seen_at: string;
-  line_movement: string | null;
   mode: string;
 };
 
@@ -255,6 +247,7 @@ function expectedValuePercent(prob: number, odds: number): number {
 function removeVigTwoWay(probA: number, probB: number) {
   const total = probA + probB;
   if (total <= 0) return { a: 0.5, b: 0.5 };
+
   return {
     a: probA / total,
     b: probB / total,
@@ -298,6 +291,7 @@ function isWithinWindow(commenceTime: string): boolean {
   const diffMs = start - now;
   const diffHours = diffMs / 1000 / 60 / 60;
   const diffMinutes = diffMs / 1000 / 60;
+
   return diffHours <= LOOKAHEAD_HOURS && diffMinutes >= MIN_MINUTES_TO_START;
 }
 
@@ -339,13 +333,21 @@ function passesSanityFilters(
 ): boolean {
   if (edge > MAX_REASONABLE_EDGE) return false;
   if (ev > MAX_REASONABLE_EV) return false;
-  if (modelProb > MAX_REASONABLE_DOG_PROB && bestOdds > MAX_REASONABLE_DOG_ODDS) {
+
+  if (
+    modelProb > MAX_REASONABLE_DOG_PROB &&
+    bestOdds > MAX_REASONABLE_DOG_ODDS
+  ) {
     return false;
   }
+
   return true;
 }
 
-function movementForOdds(currentOdds: number, previousOdds: number | null): string | null {
+function movementForOdds(
+  currentOdds: number,
+  previousOdds: number | null
+): string | null {
   if (previousOdds === null || previousOdds === currentOdds) return null;
 
   const currentProb = americanToImpliedProb(currentOdds);
@@ -353,24 +355,32 @@ function movementForOdds(currentOdds: number, previousOdds: number | null): stri
 
   if (currentProb > previousProb + 0.003) return 'toward_pick';
   if (currentProb < previousProb - 0.003) return 'away_from_pick';
+
   return 'flat';
 }
 
 function isFavorableMovement(lineMovement: string | null): boolean {
-  return lineMovement === 'toward_pick' || lineMovement === null || lineMovement === 'flat';
+  return (
+    lineMovement === 'toward_pick' ||
+    lineMovement === null ||
+    lineMovement === 'flat'
+  );
 }
 
 function buildAnalysis(candidate: Candidate): string {
   const fairText =
     candidate.fair_line !== null ? formatAmerican(candidate.fair_line) : 'N/A';
 
-  const ratingText = candidate.max_play ? 'MAX PLAY' : `${candidate.play_rating} PLAY`;
+  const ratingText = candidate.max_play
+    ? 'MAX PLAY'
+    : `${candidate.play_rating} PLAY`;
+
   const movementText =
     candidate.line_movement === 'toward_pick'
       ? ' Market is moving toward this side.'
       : candidate.line_movement === 'away_from_pick'
-      ? ' Market has moved slightly against this side.'
-      : '';
+        ? ' Market has moved slightly against this side.'
+        : '';
 
   return `${candidate.pick} at ${candidate.sportsbook} is available at ${formatAmerican(
     candidate.odds
@@ -378,7 +388,9 @@ function buildAnalysis(candidate: Candidate): string {
     candidate.model_probability * 100
   )}% versus implied probability ${round2(
     candidate.implied_probability * 100
-  )}%. Estimated edge is ${round2(candidate.edge)}% with expected value of ${round2(
+  )}%. Estimated edge is ${round2(
+    candidate.edge
+  )}% with expected value of ${round2(
     candidate.ev
   )}%. Rating: ${ratingText}.${movementText}`;
 }
@@ -415,7 +427,9 @@ function getBestPrice(entries: PriceEntry[]): PriceEntry | null {
   return [...entries].sort((a, b) => b.price - a.price)[0];
 }
 
-function getBestSpreadPrice(entries: SpreadPriceEntry[]): SpreadPriceEntry | null {
+function getBestSpreadPrice(
+  entries: SpreadPriceEntry[]
+): SpreadPriceEntry | null {
   if (!entries.length) return null;
   return [...entries].sort((a, b) => b.price - a.price)[0];
 }
@@ -433,7 +447,10 @@ function calcWeightedNoVigExcludingBest(
   const aEntries = sideAEntries.filter((x) => x.bookKey !== excludedBookKey);
   const bEntries = sideBEntries.filter((x) => x.bookKey !== excludedBookKey);
 
-  if (aEntries.length < MIN_CONSENSUS_BOOKS || bEntries.length < MIN_CONSENSUS_BOOKS) {
+  if (
+    aEntries.length < MIN_CONSENSUS_BOOKS ||
+    bEntries.length < MIN_CONSENSUS_BOOKS
+  ) {
     return null;
   }
 
@@ -463,13 +480,15 @@ function buildExistingPickKey(row: ExistingPickRow): string {
   ].join('|');
 }
 
-async function fetchExistingPregamePicks(): Promise<Map<string, ExistingPickRow>> {
+async function fetchExistingPregamePicks(): Promise<
+  Map<string, ExistingPickRow>
+> {
   const supabase = getSupabase();
 
   const { data, error } = await supabase
     .from('picks')
     .select(
-      'id, game, pick, odds, previous_odds, best_odds, edge, ev, play_rating, max_play, sportsbook, sportsbook_key, market_type, market_key, selection_name, commence_time, status, result, line_movement, odds_last_seen_at, event_id'
+      'id, game, pick, odds, previous_odds, best_odds, edge, ev, play_rating, max_play, sportsbook, sportsbook_key, market_type, market_key, selection_name, commence_time, status, result, odds_last_seen_at, event_id'
     )
     .eq('status', 'pregame')
     .eq('result', 'pending');
@@ -479,7 +498,8 @@ async function fetchExistingPregamePicks(): Promise<Map<string, ExistingPickRow>
   }
 
   const map = new Map<string, ExistingPickRow>();
-  for (const row of ((data ?? []) as ExistingPickRow[])) {
+
+  for (const row of (data ?? []) as ExistingPickRow[]) {
     map.set(buildExistingPickKey(row), row);
   }
 
@@ -523,7 +543,11 @@ function buildMoneylineCandidates(
   const away = event.away_team;
 
   if (!sides[home] || !sides[away]) return [];
-  if (sides[home].prices.length < MIN_BOOKS || sides[away].prices.length < MIN_BOOKS) {
+
+  if (
+    sides[home].prices.length < MIN_BOOKS ||
+    sides[away].prices.length < MIN_BOOKS
+  ) {
     return [];
   }
 
@@ -537,7 +561,12 @@ function buildMoneylineCandidates(
     const best = getBestPrice(entries);
     if (!best) continue;
 
-    const consensus = calcWeightedNoVigExcludingBest(entries, oppEntries, best.bookKey);
+    const consensus = calcWeightedNoVigExcludingBest(
+      entries,
+      oppEntries,
+      best.bookKey
+    );
+
     if (!consensus) continue;
 
     const modelProb = team === home ? consensus.a : consensus.b;
@@ -582,7 +611,8 @@ function buildMoneylineCandidates(
     };
 
     const existing = existingPicks.get(buildCandidateKey(baseCandidate));
-    const previousOdds = typeof existing?.odds === 'number' ? existing.odds : null;
+    const previousOdds =
+      typeof existing?.odds === 'number' ? existing.odds : null;
 
     const lineMovement = movementForOdds(best.price, previousOdds);
     const favorableMovement = isFavorableMovement(lineMovement);
@@ -654,6 +684,7 @@ function buildSpreadCandidates(
       team === event.home_team ? event.away_team : event.home_team;
     const oppositeKey = `${oppositeTeam}|${-point}`;
     const opposite = spreads[oppositeKey];
+
     if (!opposite || opposite.prices.length < MIN_BOOKS) continue;
 
     const best = getBestSpreadPrice(aggregate.prices);
@@ -664,6 +695,7 @@ function buildSpreadCandidates(
       opposite.prices,
       best.bookKey
     );
+
     if (!consensus) continue;
 
     const modelProb = consensus.a;
@@ -710,7 +742,8 @@ function buildSpreadCandidates(
     };
 
     const existing = existingPicks.get(buildCandidateKey(baseCandidate));
-    const previousOdds = typeof existing?.odds === 'number' ? existing.odds : null;
+    const previousOdds =
+      typeof existing?.odds === 'number' ? existing.odds : null;
 
     const lineMovement = movementForOdds(best.price, previousOdds);
     const favorableMovement = isFavorableMovement(lineMovement);
@@ -778,6 +811,7 @@ function buildTotalCandidates(
     if (parts.length < 2) continue;
 
     const point = Number(parts[1]);
+
     if (!Number.isNaN(point)) {
       seenPoints.add(point);
     }
@@ -791,6 +825,7 @@ function buildTotalCandidates(
     const under = totals[underKey];
 
     if (!over || !under) continue;
+
     if (over.prices.length < MIN_BOOKS || under.prices.length < MIN_BOOKS) {
       continue;
     }
@@ -798,6 +833,7 @@ function buildTotalCandidates(
     for (const side of ['Over', 'Under'] as const) {
       const aggregate = side === 'Over' ? over : under;
       const best = getBestTotalPrice(aggregate.prices);
+
       if (!best) continue;
 
       const consensus = calcWeightedNoVigExcludingBest(
@@ -805,6 +841,7 @@ function buildTotalCandidates(
         under.prices,
         best.bookKey
       );
+
       if (!consensus) continue;
 
       const modelProb = side === 'Over' ? consensus.a : consensus.b;
@@ -849,7 +886,8 @@ function buildTotalCandidates(
       };
 
       const existing = existingPicks.get(buildCandidateKey(baseCandidate));
-      const previousOdds = typeof existing?.odds === 'number' ? existing.odds : null;
+      const previousOdds =
+        typeof existing?.odds === 'number' ? existing.odds : null;
 
       const lineMovement = movementForOdds(best.price, previousOdds);
       const favorableMovement = isFavorableMovement(lineMovement);
@@ -919,6 +957,7 @@ export async function GET(req: NextRequest) {
         const totals = buildTotalCandidates(event, existingPicks, nowIso);
 
         const eventCandidates = [...moneyline, ...spreads, ...totals];
+
         candidatesFound += eventCandidates.length;
         allCandidates.push(...eventCandidates);
       }
@@ -928,7 +967,9 @@ export async function GET(req: NextRequest) {
       if (ratingRank(b.play_rating) !== ratingRank(a.play_rating)) {
         return ratingRank(b.play_rating) - ratingRank(a.play_rating);
       }
+
       if (b.ev !== a.ev) return b.ev - a.ev;
+
       return b.edge - a.edge;
     });
 
@@ -947,9 +988,11 @@ export async function GET(req: NextRequest) {
 
         if (
           ratingRank(candidate.play_rating) > ratingRank(existing.play_rating) ||
-          (ratingRank(candidate.play_rating) === ratingRank(existing.play_rating) &&
+          (ratingRank(candidate.play_rating) ===
+            ratingRank(existing.play_rating) &&
             candidate.ev > existing.ev) ||
-          (ratingRank(candidate.play_rating) === ratingRank(existing.play_rating) &&
+          (ratingRank(candidate.play_rating) ===
+            ratingRank(existing.play_rating) &&
             candidate.ev === existing.ev &&
             candidate.edge > existing.edge)
         ) {
@@ -961,7 +1004,9 @@ export async function GET(req: NextRequest) {
         if (ratingRank(b.play_rating) !== ratingRank(a.play_rating)) {
           return ratingRank(b.play_rating) - ratingRank(a.play_rating);
         }
+
         if (b.ev !== a.ev) return b.ev - a.ev;
+
         return b.edge - a.edge;
       });
     }
@@ -982,7 +1027,6 @@ export async function GET(req: NextRequest) {
       }
 
       if (
-        row.line_movement === 'away_from_pick' &&
         rowEdge !== null &&
         rowEv !== null &&
         (rowEdge < STALE_DROP_EDGE || rowEv < STALE_DROP_EV)
@@ -999,7 +1043,10 @@ export async function GET(req: NextRequest) {
 
       if (staleDeleteError) {
         return NextResponse.json(
-          { success: false, error: `Failed deleting stale picks: ${staleDeleteError.message}` },
+          {
+            success: false,
+            error: `Failed deleting stale picks: ${staleDeleteError.message}`,
+          },
           { status: 500 }
         );
       }
@@ -1013,7 +1060,10 @@ export async function GET(req: NextRequest) {
 
     if (deleteError) {
       return NextResponse.json(
-        { success: false, error: `Failed clearing old picks: ${deleteError.message}` },
+        {
+          success: false,
+          error: `Failed clearing old picks: ${deleteError.message}`,
+        },
         { status: 500 }
       );
     }
@@ -1069,7 +1119,6 @@ export async function GET(req: NextRequest) {
       closing_odds: c.closing_odds,
       clv: c.clv,
       odds_last_seen_at: c.odds_last_seen_at,
-      line_movement: c.line_movement,
       mode: c.mode,
     }));
 
