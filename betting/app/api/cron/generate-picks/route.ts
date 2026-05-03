@@ -23,14 +23,30 @@ const ALLOWED_BOOKS = new Set([
 const SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
 const MIN_BOOKS = 2;
-const MIN_CONSENSUS_BOOKS = 2;
-const MIN_EDGE = 1.0;
-const MIN_EV = 1.0;
+const MIN_CONSENSUS_BOOKS = 1;
+
+const MIN_EDGE_BY_MARKET = {
+  moneyline: 1.25,
+  spread: 0.65,
+  total: 0.65,
+};
+
+const MIN_EV_BY_MARKET = {
+  moneyline: 1.25,
+  spread: 0.65,
+  total: 0.65,
+};
 
 const MAX_PICKS_PER_RUN = 12;
 const ONE_PICK_PER_GAME = true;
 const LOOKAHEAD_HOURS = 36;
 const MIN_MINUTES_TO_START = 5;
+
+const MAX_PICKS_PER_MARKET = {
+  moneyline: 5,
+  spread: 4,
+  total: 4,
+};
 
 const MAX_REASONABLE_EDGE = 12;
 const MAX_REASONABLE_EV = 15;
@@ -113,6 +129,7 @@ type TotalAggregate = {
   prices: TotalPriceEntry[];
 };
 
+type MarketType = 'moneyline' | 'spread' | 'total';
 type PlayRating = 'MAX' | 'A' | 'B' | 'C';
 type PickStatus = 'pregame';
 
@@ -143,7 +160,7 @@ type Candidate = {
   sport: string;
   game: string;
   pick: string;
-  market_type: 'moneyline' | 'spread' | 'total';
+  market_type: MarketType;
   market_key: string;
   selection_name: string;
   odds: number;
@@ -302,12 +319,22 @@ function formatAmerican(odds: number): string {
 function getPlayRating(
   edge: number,
   ev: number,
-  favorableMovement: boolean
+  favorableMovement: boolean,
+  marketType: MarketType
 ): PlayRating | null {
-  if (edge >= 5 && ev >= 8 && favorableMovement) return 'MAX';
-  if (edge >= 3.5 && ev >= 5) return 'A';
-  if (edge >= 2 && ev >= 2.5) return 'B';
-  if (edge >= 1 && ev >= 1) return 'C';
+  if (marketType === 'moneyline') {
+    if (edge >= 5 && ev >= 8 && favorableMovement) return 'MAX';
+    if (edge >= 3.5 && ev >= 5) return 'A';
+    if (edge >= 2 && ev >= 2.5) return 'B';
+    if (edge >= 1.25 && ev >= 1.25) return 'C';
+    return null;
+  }
+
+  if (edge >= 3 && ev >= 4.5 && favorableMovement) return 'MAX';
+  if (edge >= 2 && ev >= 3) return 'A';
+  if (edge >= 1.15 && ev >= 1.25) return 'B';
+  if (edge >= 0.65 && ev >= 0.65) return 'C';
+
   return null;
 }
 
@@ -375,6 +402,13 @@ function buildAnalysis(candidate: Candidate): string {
     ? 'MAX PLAY'
     : `${candidate.play_rating} PLAY`;
 
+  const marketText =
+    candidate.market_type === 'moneyline'
+      ? 'moneyline'
+      : candidate.market_type === 'spread'
+        ? 'spread'
+        : 'total';
+
   const movementText =
     candidate.line_movement === 'toward_pick'
       ? ' Market is moving toward this side.'
@@ -384,9 +418,9 @@ function buildAnalysis(candidate: Candidate): string {
 
   return `${candidate.pick} at ${candidate.sportsbook} is available at ${formatAmerican(
     candidate.odds
-  )} versus a weighted consensus fair line of ${fairText}. Consensus win probability is ${round2(
+  )}. This ${marketText} is priced better than the weighted no-vig consensus, giving it a fair line of ${fairText}. Model probability is ${round2(
     candidate.model_probability * 100
-  )}% versus implied probability ${round2(
+  )}% versus market implied probability ${round2(
     candidate.implied_probability * 100
   )}%. Estimated edge is ${round2(
     candidate.edge
@@ -569,7 +603,7 @@ function buildMoneylineCandidates(
 
     if (!consensus) continue;
 
-    const modelProb = team === home ? consensus.a : consensus.b;
+    const modelProb = consensus.a;
     const implied = americanToImpliedProb(best.price);
     const edge = (modelProb - implied) * 100;
     const ev = expectedValuePercent(modelProb, best.price);
@@ -616,10 +650,21 @@ function buildMoneylineCandidates(
 
     const lineMovement = movementForOdds(best.price, previousOdds);
     const favorableMovement = isFavorableMovement(lineMovement);
-    const rating = getPlayRating(edge, ev, favorableMovement);
+    const rating = getPlayRating(
+      edge,
+      ev,
+      favorableMovement,
+      'moneyline'
+    );
 
     if (!rating) continue;
-    if (edge < MIN_EDGE || ev < MIN_EV) continue;
+
+    if (
+      edge < MIN_EDGE_BY_MARKET.moneyline ||
+      ev < MIN_EV_BY_MARKET.moneyline
+    ) {
+      continue;
+    }
 
     const finalCandidate: Candidate = {
       ...baseCandidate,
@@ -653,7 +698,10 @@ function buildSpreadCandidates(
     if (!market?.outcomes?.length || market.outcomes.length < 2) continue;
 
     for (const outcome of market.outcomes) {
-      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') {
+      if (
+        typeof outcome.price !== 'number' ||
+        typeof outcome.point !== 'number'
+      ) {
         continue;
       }
 
@@ -678,10 +726,12 @@ function buildSpreadCandidates(
     const [team, pointStr] = selectionKey.split('|');
     const point = Number(pointStr);
 
+    if (!team || Number.isNaN(point)) continue;
     if (aggregate.prices.length < MIN_BOOKS) continue;
 
     const oppositeTeam =
       team === event.home_team ? event.away_team : event.home_team;
+
     const oppositeKey = `${oppositeTeam}|${-point}`;
     const opposite = spreads[oppositeKey];
 
@@ -747,10 +797,13 @@ function buildSpreadCandidates(
 
     const lineMovement = movementForOdds(best.price, previousOdds);
     const favorableMovement = isFavorableMovement(lineMovement);
-    const rating = getPlayRating(edge, ev, favorableMovement);
+    const rating = getPlayRating(edge, ev, favorableMovement, 'spread');
 
     if (!rating) continue;
-    if (edge < MIN_EDGE || ev < MIN_EV) continue;
+
+    if (edge < MIN_EDGE_BY_MARKET.spread || ev < MIN_EV_BY_MARKET.spread) {
+      continue;
+    }
 
     const finalCandidate: Candidate = {
       ...baseCandidate,
@@ -784,7 +837,10 @@ function buildTotalCandidates(
     if (!market?.outcomes?.length || market.outcomes.length < 2) continue;
 
     for (const outcome of market.outcomes) {
-      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') {
+      if (
+        typeof outcome.price !== 'number' ||
+        typeof outcome.point !== 'number'
+      ) {
         continue;
       }
 
@@ -891,10 +947,13 @@ function buildTotalCandidates(
 
       const lineMovement = movementForOdds(best.price, previousOdds);
       const favorableMovement = isFavorableMovement(lineMovement);
-      const rating = getPlayRating(edge, ev, favorableMovement);
+      const rating = getPlayRating(edge, ev, favorableMovement, 'total');
 
       if (!rating) continue;
-      if (edge < MIN_EDGE || ev < MIN_EV) continue;
+
+      if (edge < MIN_EDGE_BY_MARKET.total || ev < MIN_EV_BY_MARKET.total) {
+        continue;
+      }
 
       const finalCandidate: Candidate = {
         ...baseCandidate,
@@ -969,49 +1028,50 @@ export async function GET(req: NextRequest) {
       }
 
       if (b.ev !== a.ev) return b.ev - a.ev;
-
       return b.edge - a.edge;
     });
 
-    let finalCandidates = allCandidates;
+    const finalCandidates: Candidate[] = [];
+    const usedGames = new Set<string>();
 
-    if (ONE_PICK_PER_GAME) {
-      const bestByGame = new Map<string, Candidate>();
+    const marketCounts: Record<MarketType, number> = {
+      moneyline: 0,
+      spread: 0,
+      total: 0,
+    };
 
-      for (const candidate of allCandidates) {
-        const existing = bestByGame.get(candidate.game);
+    for (const candidate of allCandidates) {
+      if (finalCandidates.length >= MAX_PICKS_PER_RUN) break;
 
-        if (!existing) {
-          bestByGame.set(candidate.game, candidate);
-          continue;
-        }
+      if (ONE_PICK_PER_GAME && usedGames.has(candidate.game)) continue;
 
-        if (
-          ratingRank(candidate.play_rating) > ratingRank(existing.play_rating) ||
-          (ratingRank(candidate.play_rating) ===
-            ratingRank(existing.play_rating) &&
-            candidate.ev > existing.ev) ||
-          (ratingRank(candidate.play_rating) ===
-            ratingRank(existing.play_rating) &&
-            candidate.ev === existing.ev &&
-            candidate.edge > existing.edge)
-        ) {
-          bestByGame.set(candidate.game, candidate);
-        }
+      if (
+        marketCounts[candidate.market_type] >=
+        MAX_PICKS_PER_MARKET[candidate.market_type]
+      ) {
+        continue;
       }
 
-      finalCandidates = Array.from(bestByGame.values()).sort((a, b) => {
-        if (ratingRank(b.play_rating) !== ratingRank(a.play_rating)) {
-          return ratingRank(b.play_rating) - ratingRank(a.play_rating);
-        }
-
-        if (b.ev !== a.ev) return b.ev - a.ev;
-
-        return b.edge - a.edge;
-      });
+      finalCandidates.push(candidate);
+      usedGames.add(candidate.game);
+      marketCounts[candidate.market_type]++;
     }
 
-    finalCandidates = finalCandidates.slice(0, MAX_PICKS_PER_RUN);
+    if (finalCandidates.length < MAX_PICKS_PER_RUN) {
+      for (const candidate of allCandidates) {
+        if (finalCandidates.length >= MAX_PICKS_PER_RUN) break;
+
+        const alreadyAdded = finalCandidates.some(
+          (p) => buildCandidateKey(p) === buildCandidateKey(candidate)
+        );
+
+        if (alreadyAdded) continue;
+        if (ONE_PICK_PER_GAME && usedGames.has(candidate.game)) continue;
+
+        finalCandidates.push(candidate);
+        usedGames.add(candidate.game);
+      }
+    }
 
     const finalKeys = new Set(finalCandidates.map(buildCandidateKey));
     const staleIds: string[] = [];
@@ -1077,11 +1137,13 @@ export async function GET(req: NextRequest) {
           eventsChecked,
           candidatesFound,
           finalSelected: 0,
+          marketCounts,
           minBooks: MIN_BOOKS,
           minConsensusBooks: MIN_CONSENSUS_BOOKS,
-          minEdge: MIN_EDGE,
-          minEv: MIN_EV,
+          minEdgeByMarket: MIN_EDGE_BY_MARKET,
+          minEvByMarket: MIN_EV_BY_MARKET,
           maxPicksPerRun: MAX_PICKS_PER_RUN,
+          maxPicksPerMarket: MAX_PICKS_PER_MARKET,
           onePickPerGame: ONE_PICK_PER_GAME,
           staleRemoved: staleIds.length,
         },
@@ -1142,11 +1204,13 @@ export async function GET(req: NextRequest) {
         eventsChecked,
         candidatesFound,
         finalSelected: finalCandidates.length,
+        marketCounts,
         minBooks: MIN_BOOKS,
         minConsensusBooks: MIN_CONSENSUS_BOOKS,
-        minEdge: MIN_EDGE,
-        minEv: MIN_EV,
+        minEdgeByMarket: MIN_EDGE_BY_MARKET,
+        minEvByMarket: MIN_EV_BY_MARKET,
         maxPicksPerRun: MAX_PICKS_PER_RUN,
+        maxPicksPerMarket: MAX_PICKS_PER_MARKET,
         onePickPerGame: ONE_PICK_PER_GAME,
         staleRemoved: staleIds.length,
       },
