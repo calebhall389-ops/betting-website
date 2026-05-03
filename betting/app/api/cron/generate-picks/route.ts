@@ -24,17 +24,16 @@ const SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
 const MIN_BOOKS = 1;
 const MIN_CONSENSUS_BOOKS = 1;
-
 const MIN_EDGE_BY_MARKET = {
-  moneyline: 1.25,
-  spread: 0.35,
-  total: 0.35,
+  moneyline: 0.05,
+  spread: 0.05,
+  total: 0.05,
 };
 
 const MIN_EV_BY_MARKET = {
-  moneyline: 1.5,
-  spread: 0.4,
-  total: 0.4,
+  moneyline: 0.05,
+  spread: 0.05,
+  total: 0.05,
 };
 
 const MAX_PICKS_PER_RUN = 12;
@@ -315,7 +314,6 @@ function isWithinWindow(commenceTime: string): boolean {
 function formatAmerican(odds: number): string {
   return odds > 0 ? `+${odds}` : `${odds}`;
 }
-
 function getPlayRating(
   edge: number,
   ev: number,
@@ -326,8 +324,17 @@ function getPlayRating(
     if (edge >= 5 && ev >= 8 && favorableMovement) return 'MAX';
     if (edge >= 3.5 && ev >= 5) return 'A';
     if (edge >= 2.25 && ev >= 3) return 'B';
-    if (edge >= 1.25 && ev >= 1.5) return 'C';
+    if (edge >= 0.05 && ev >= 0.05) return 'C';
     return null;
+  }
+
+  if (edge >= 3 && ev >= 4.5 && favorableMovement) return 'MAX';
+  if (edge >= 1.5 && ev >= 2) return 'A';
+  if (edge >= 0.75 && ev >= 0.85) return 'B';
+  if (edge >= 0.05 && ev >= 0.05) return 'C';
+
+  return null;
+}
   }
 
   if (edge >= 3 && ev >= 4.5 && favorableMovement) return 'MAX';
