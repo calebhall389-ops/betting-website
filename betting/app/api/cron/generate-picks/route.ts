@@ -28,9 +28,9 @@ const ONE_PICK_PER_GAME = true;
 const MIN_BOOKS_PER_SIDE = 1;
 
 const THRESHOLDS = {
-  moneyline: { minEdge: 1.25, minEv: 1.25 },
-  spread: { minEdge: 1.25, minEv: 1.5 },
-  total: { minEdge: 1.25, minEv: 1.5 },
+  moneyline: { minEdge: 0.35, minEv: 0.35 },
+  spread: { minEdge: 0.35, minEv: 0.35 },
+  total: { minEdge: 0.35, minEv: 0.35 },
 };
 
 type MarketType = 'moneyline' | 'spread' | 'total';
@@ -75,6 +75,7 @@ function decimalOdds(odds: number) {
 
 function americanOdds(prob: number) {
   if (prob <= 0 || prob >= 1) return 0;
+
   return prob >= 0.5
     ? Math.round((-100 * prob) / (1 - prob))
     : Math.round((100 * (1 - prob)) / prob);
@@ -123,15 +124,15 @@ function formatPoint(point: number) {
 function getPlayRating(edge: number, ev: number, market: MarketType) {
   if (market === 'moneyline') {
     if (edge >= 5 && ev >= 8) return 'MAX';
-    if (edge >= 3.25 && ev >= 5) return 'A';
-    if (edge >= 2 && ev >= 3) return 'B';
+    if (edge >= 3 && ev >= 4.5) return 'A';
+    if (edge >= 1.5 && ev >= 2) return 'B';
     if (edge >= THRESHOLDS.moneyline.minEdge && ev >= THRESHOLDS.moneyline.minEv) return 'C';
     return null;
   }
 
   if (edge >= 4 && ev >= 6) return 'MAX';
-  if (edge >= 2.25 && ev >= 3.25) return 'A';
-  if (edge >= 1.25 && ev >= 1.75) return 'B';
+  if (edge >= 2 && ev >= 3) return 'A';
+  if (edge >= 1 && ev >= 1.25) return 'B';
   if (edge >= THRESHOLDS[market].minEdge && ev >= THRESHOLDS[market].minEv) return 'C';
 
   return null;
