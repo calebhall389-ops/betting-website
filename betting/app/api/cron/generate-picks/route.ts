@@ -22,8 +22,10 @@ const SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 const LOOKAHEAD_HOURS = 36;
 const MIN_MINUTES_TO_START = 5;
 const MAX_PICKS_PER_RUN = 10;
-const FALLBACK_PICKS_IF_ZERO = 5;
 const ONE_PICK_PER_GAME = true;
+
+const MIN_DISPLAY_EDGE = 0.75;
+const MIN_DISPLAY_EV = 1.0;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -65,6 +67,16 @@ function decimalOdds(odds: number) {
   return odds > 0 ? 1 + odds / 100 : 1 + 100 / Math.abs(odds);
 }
 
+function americanOdds(probability: number) {
+  if (probability <= 0 || probability >= 1) return null;
+
+  if (probability >= 0.5) {
+    return Math.round((-100 * probability) / (1 - probability));
+  }
+
+  return Math.round((100 * (1 - probability)) / probability);
+}
+
 function expectedValue(trueProb: number, odds: number) {
   return (trueProb * decimalOdds(odds) - 1) * 100;
 }
@@ -95,7 +107,8 @@ function cleanSport(sportKey: string) {
   return sportKey.toUpperCase();
 }
 
-function formatSigned(num: number) {
+function formatSigned(num: number | null) {
+  if (num === null) return '—';
   return num > 0 ? `+${num}` : `${num}`;
 }
 
@@ -107,7 +120,7 @@ function getPlayRating(edge: number, ev: number) {
   if (edge >= 5 && ev >= 8) return 'MAX';
   if (edge >= 3 && ev >= 5) return 'A';
   if (edge >= 1.25 && ev >= 2) return 'B';
-  if (edge >= 0 && ev >= 0) return 'C';
+  if (edge >= MIN_DISPLAY_EDGE && ev >= MIN_DISPLAY_EV) return 'C';
   return null;
 }
 
@@ -119,16 +132,27 @@ function stakeForRating(rating: string) {
 
 function scorePick(p: Candidate) {
   const boost =
-    p.play_rating === 'MAX' ? 100 :
-    p.play_rating === 'A' ? 70 :
-    p.play_rating === 'B' ? 40 :
-    10;
+    p.play_rating === 'MAX'
+      ? 100
+      : p.play_rating === 'A'
+        ? 70
+        : p.play_rating === 'B'
+          ? 40
+          : 10;
 
   return boost + p.ev + p.edge;
 }
 
 function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Candidate[] {
-  const sides: Record<string, { prices: number[]; bestPrice: number; bestBook: string; bestBookKey: string }> = {};
+  const sides: Record<
+    string,
+    {
+      prices: number[];
+      bestPrice: number;
+      bestBook: string;
+      bestBookKey: string;
+    }
+  > = {};
 
   for (const book of event.bookmakers ?? []) {
     if (!ALLOWED_BOOKS.has(book.key)) continue;
@@ -184,13 +208,23 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
 
     if (!rating) continue;
 
+    const fairLine = americanOdds(trueProb);
+
     picks.push({
       sport: cleanSport(sport),
       game: `${event.away_team} at ${event.home_team}`,
       pick: `${team} ML`,
       odds: side.bestPrice,
       confidence: `${Math.round(trueProb * 100)}`,
-      analysis: `${team} ML shows the best available value. Best price is ${formatSigned(side.bestPrice)} at ${side.bestBook}. Model probability is ${(trueProb * 100).toFixed(1)}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(2)}%. Play rating: ${rating}.`,
+      analysis: `${team} ML shows value. Best price is ${formatSigned(
+        side.bestPrice
+      )} at ${side.bestBook}. Model probability is ${(trueProb * 100).toFixed(
+        1
+      )}%. Market implied probability is ${(implied * 100).toFixed(
+        1
+      )}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(
+        2
+      )}%. Fair line is ${formatSigned(fairLine)}. Play rating: ${rating}.`,
       stake: stakeForRating(rating),
       result: 'pending',
       sportsbook: side.bestBook,
@@ -224,6 +258,7 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
       if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') continue;
 
       const key = String(Math.abs(outcome.point));
+
       if (!byLine[key]) byLine[key] = [];
 
       byLine[key].push({
@@ -266,13 +301,25 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
 
       if (!rating) continue;
 
+      const fairLine = americanOdds(item.trueProb);
+
       picks.push({
         sport: cleanSport(sport),
         game: `${event.away_team} at ${event.home_team}`,
         pick: `${item.side.team} ${formatPoint(item.side.point)}`,
         odds: item.side.price,
         confidence: `${Math.round(item.trueProb * 100)}`,
-        analysis: `${item.side.team} ${formatPoint(item.side.point)} spread shows the best available value. Best price is ${formatSigned(item.side.price)} at ${item.side.book}. Model cover probability is ${(item.trueProb * 100).toFixed(1)}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(2)}%. Play rating: ${rating}.`,
+        analysis: `${item.side.team} ${formatPoint(
+          item.side.point
+        )} spread shows value. Best price is ${formatSigned(
+          item.side.price
+        )} at ${item.side.book}. Model cover probability is ${(
+          item.trueProb * 100
+        ).toFixed(1)}%. Market implied probability is ${(implied * 100).toFixed(
+          1
+        )}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(
+          2
+        )}%. Fair price is ${formatSigned(fairLine)}. Play rating: ${rating}.`,
         stake: stakeForRating(rating),
         result: 'pending',
         sportsbook: item.side.book,
@@ -308,6 +355,7 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
       if (outcome.name !== 'Over' && outcome.name !== 'Under') continue;
 
       const key = String(outcome.point);
+
       if (!byTotal[key]) byTotal[key] = [];
 
       byTotal[key].push({
@@ -350,13 +398,23 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
 
       if (!rating) continue;
 
+      const fairLine = americanOdds(item.trueProb);
+
       picks.push({
         sport: cleanSport(sport),
         game: `${event.away_team} at ${event.home_team}`,
         pick: `${item.side.label} ${item.side.point}`,
         odds: item.side.price,
         confidence: `${Math.round(item.trueProb * 100)}`,
-        analysis: `${item.side.label} ${item.side.point} shows the best available value. Best price is ${formatSigned(item.side.price)} at ${item.side.book}. Model hit probability is ${(item.trueProb * 100).toFixed(1)}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(2)}%. Play rating: ${rating}.`,
+        analysis: `${item.side.label} ${item.side.point} total shows value. Best price is ${formatSigned(
+          item.side.price
+        )} at ${item.side.book}. Model hit probability is ${(
+          item.trueProb * 100
+        ).toFixed(1)}%. Market implied probability is ${(implied * 100).toFixed(
+          1
+        )}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(
+          2
+        )}%. Fair price is ${formatSigned(fairLine)}. Play rating: ${rating}.`,
         stake: stakeForRating(rating),
         result: 'pending',
         sportsbook: item.side.book,
@@ -397,6 +455,13 @@ function selectPicks(candidates: Candidate[], limit: number) {
 
 export async function GET() {
   try {
+    if (!ODDS_API_KEY) {
+      return NextResponse.json({
+        success: false,
+        error: 'Missing ODDS_API_KEY.',
+      });
+    }
+
     const supabase = getSupabase();
     const nowIso = new Date().toISOString();
 
@@ -408,7 +473,9 @@ export async function GET() {
       totalBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'normal',
+      mode: 'strict-clean-board',
+      minDisplayEdge: MIN_DISPLAY_EDGE,
+      minDisplayEv: MIN_DISPLAY_EV,
     };
 
     const candidates: Candidate[] = [];
@@ -416,10 +483,14 @@ export async function GET() {
     for (const sport of SPORTS) {
       const url = `${ODDS_API_BASE}/${sport}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=h2h,spreads,totals&oddsFormat=american`;
 
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetch(url, {
+        cache: 'no-store',
+      });
+
       if (!res.ok) continue;
 
       const events = await res.json();
+
       if (!Array.isArray(events)) continue;
 
       for (const event of events) {
@@ -443,13 +514,7 @@ export async function GET() {
 
     debug.candidatesFound = candidates.length;
 
-    let final = selectPicks(candidates, MAX_PICKS_PER_RUN);
-
-    if (!final.length && candidates.length) {
-      debug.mode = 'fallback-best-board';
-      final = selectPicks(candidates, FALLBACK_PICKS_IF_ZERO);
-    }
-
+    const final = selectPicks(candidates, MAX_PICKS_PER_RUN);
     debug.finalSelected = final.length;
 
     await supabase.from('picks').delete().eq('status', 'pregame');
