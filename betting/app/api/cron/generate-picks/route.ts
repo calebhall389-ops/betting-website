@@ -22,19 +22,19 @@ const ALLOWED_BOOKS = new Set([
 
 const SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 
-const MIN_BOOKS = 2;
+const MIN_BOOKS = 1;
 const MIN_CONSENSUS_BOOKS = 1;
 
 const MIN_EDGE_BY_MARKET = {
-  moneyline: 1.25,
-  spread: 0.65,
-  total: 0.65,
+  moneyline: 0.25,
+  spread: 0.15,
+  total: 0.15,
 };
 
 const MIN_EV_BY_MARKET = {
-  moneyline: 1.25,
-  spread: 0.65,
-  total: 0.65,
+  moneyline: 0.25,
+  spread: 0.15,
+  total: 0.15,
 };
 
 const MAX_PICKS_PER_RUN = 12;
@@ -48,13 +48,13 @@ const MAX_PICKS_PER_MARKET = {
   total: 4,
 };
 
-const MAX_REASONABLE_EDGE = 12;
-const MAX_REASONABLE_EV = 15;
-const MAX_REASONABLE_DOG_PROB = 0.66;
-const MAX_REASONABLE_DOG_ODDS = 170;
+const MAX_REASONABLE_EDGE = 18;
+const MAX_REASONABLE_EV = 22;
+const MAX_REASONABLE_DOG_PROB = 0.72;
+const MAX_REASONABLE_DOG_ODDS = 250;
 
-const STALE_DROP_EDGE = 0.75;
-const STALE_DROP_EV = 0.75;
+const STALE_DROP_EDGE = 0.1;
+const STALE_DROP_EV = 0.1;
 
 const BOOK_WEIGHTS: Record<string, number> = {
   fanduel: 1.0,
@@ -325,15 +325,15 @@ function getPlayRating(
   if (marketType === 'moneyline') {
     if (edge >= 5 && ev >= 8 && favorableMovement) return 'MAX';
     if (edge >= 3.5 && ev >= 5) return 'A';
-    if (edge >= 2 && ev >= 2.5) return 'B';
-    if (edge >= 1.25 && ev >= 1.25) return 'C';
+    if (edge >= 1.5 && ev >= 1.5) return 'B';
+    if (edge >= 0.25 && ev >= 0.25) return 'C';
     return null;
   }
 
   if (edge >= 3 && ev >= 4.5 && favorableMovement) return 'MAX';
-  if (edge >= 2 && ev >= 3) return 'A';
-  if (edge >= 1.15 && ev >= 1.25) return 'B';
-  if (edge >= 0.65 && ev >= 0.65) return 'C';
+  if (edge >= 1.5 && ev >= 2) return 'A';
+  if (edge >= 0.75 && ev >= 0.75) return 'B';
+  if (edge >= 0.15 && ev >= 0.15) return 'C';
 
   return null;
 }
@@ -342,7 +342,7 @@ function getStakeUnits(rating: PlayRating): number {
   if (rating === 'MAX') return 2.0;
   if (rating === 'A') return 1.5;
   if (rating === 'B') return 1.0;
-  return 0.75;
+  return 0.5;
 }
 
 function ratingRank(rating: PlayRating): number {
@@ -478,8 +478,16 @@ function calcWeightedNoVigExcludingBest(
   sideBEntries: Array<{ bookKey: string; price: number }>,
   excludedBookKey: string
 ): { a: number; b: number } | null {
-  const aEntries = sideAEntries.filter((x) => x.bookKey !== excludedBookKey);
-  const bEntries = sideBEntries.filter((x) => x.bookKey !== excludedBookKey);
+  let aEntries = sideAEntries.filter((x) => x.bookKey !== excludedBookKey);
+  let bEntries = sideBEntries.filter((x) => x.bookKey !== excludedBookKey);
+
+  if (
+    aEntries.length < MIN_CONSENSUS_BOOKS ||
+    bEntries.length < MIN_CONSENSUS_BOOKS
+  ) {
+    aEntries = sideAEntries;
+    bEntries = sideBEntries;
+  }
 
   if (
     aEntries.length < MIN_CONSENSUS_BOOKS ||
@@ -650,12 +658,7 @@ function buildMoneylineCandidates(
 
     const lineMovement = movementForOdds(best.price, previousOdds);
     const favorableMovement = isFavorableMovement(lineMovement);
-    const rating = getPlayRating(
-      edge,
-      ev,
-      favorableMovement,
-      'moneyline'
-    );
+    const rating = getPlayRating(edge, ev, favorableMovement, 'moneyline');
 
     if (!rating) continue;
 
@@ -1042,7 +1045,6 @@ export async function GET(req: NextRequest) {
 
     for (const candidate of allCandidates) {
       if (finalCandidates.length >= MAX_PICKS_PER_RUN) break;
-
       if (ONE_PICK_PER_GAME && usedGames.has(candidate.game)) continue;
 
       if (
