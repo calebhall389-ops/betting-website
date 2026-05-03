@@ -26,15 +26,15 @@ const MIN_BOOKS = 1;
 const MIN_CONSENSUS_BOOKS = 1;
 
 const MIN_EDGE_BY_MARKET = {
-  moneyline: 2.0,
-  spread: 0.65,
-  total: 0.65,
+  moneyline: 1.25,
+  spread: 0.35,
+  total: 0.35,
 };
 
 const MIN_EV_BY_MARKET = {
-  moneyline: 4.0,
-  spread: 0.75,
-  total: 0.75,
+  moneyline: 1.5,
+  spread: 0.4,
+  total: 0.4,
 };
 
 const MAX_PICKS_PER_RUN = 12;
@@ -43,7 +43,7 @@ const LOOKAHEAD_HOURS = 36;
 const MIN_MINUTES_TO_START = 5;
 
 const MAX_PICKS_PER_MARKET = {
-  moneyline: 2,
+  moneyline: 3,
   spread: 5,
   total: 5,
 };
@@ -325,15 +325,15 @@ function getPlayRating(
   if (marketType === 'moneyline') {
     if (edge >= 5 && ev >= 8 && favorableMovement) return 'MAX';
     if (edge >= 3.5 && ev >= 5) return 'A';
-    if (edge >= 2.5 && ev >= 4.5) return 'B';
-    if (edge >= 2.0 && ev >= 4.0) return 'C';
+    if (edge >= 2.25 && ev >= 3) return 'B';
+    if (edge >= 1.25 && ev >= 1.5) return 'C';
     return null;
   }
 
   if (edge >= 3 && ev >= 4.5 && favorableMovement) return 'MAX';
   if (edge >= 1.5 && ev >= 2) return 'A';
-  if (edge >= 0.9 && ev >= 1.1) return 'B';
-  if (edge >= 0.65 && ev >= 0.75) return 'C';
+  if (edge >= 0.75 && ev >= 0.85) return 'B';
+  if (edge >= 0.35 && ev >= 0.4) return 'C';
 
   return null;
 }
@@ -625,9 +625,7 @@ function buildMoneylineCandidates(
     const edge = (modelProb - implied) * 100;
     const ev = expectedValuePercent(modelProb, best.price);
 
-    if (
-      !passesSanityFilters(modelProb, best.price, edge, ev, 'moneyline')
-    ) {
+    if (!passesSanityFilters(modelProb, best.price, edge, ev, 'moneyline')) {
       continue;
     }
 
