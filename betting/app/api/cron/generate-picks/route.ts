@@ -26,15 +26,15 @@ const MIN_BOOKS = 1;
 const MIN_CONSENSUS_BOOKS = 1;
 
 const MIN_EDGE_BY_MARKET = {
-  moneyline: 0.25,
-  spread: 0.15,
-  total: 0.15,
+  moneyline: 2.0,
+  spread: 0.65,
+  total: 0.65,
 };
 
 const MIN_EV_BY_MARKET = {
-  moneyline: 0.25,
-  spread: 0.15,
-  total: 0.15,
+  moneyline: 4.0,
+  spread: 0.75,
+  total: 0.75,
 };
 
 const MAX_PICKS_PER_RUN = 12;
@@ -43,9 +43,9 @@ const LOOKAHEAD_HOURS = 36;
 const MIN_MINUTES_TO_START = 5;
 
 const MAX_PICKS_PER_MARKET = {
-  moneyline: 5,
-  spread: 4,
-  total: 4,
+  moneyline: 2,
+  spread: 5,
+  total: 5,
 };
 
 const MAX_REASONABLE_EDGE = 18;
@@ -325,15 +325,15 @@ function getPlayRating(
   if (marketType === 'moneyline') {
     if (edge >= 5 && ev >= 8 && favorableMovement) return 'MAX';
     if (edge >= 3.5 && ev >= 5) return 'A';
-    if (edge >= 1.5 && ev >= 1.5) return 'B';
-    if (edge >= 0.25 && ev >= 0.25) return 'C';
+    if (edge >= 2.5 && ev >= 4.5) return 'B';
+    if (edge >= 2.0 && ev >= 4.0) return 'C';
     return null;
   }
 
   if (edge >= 3 && ev >= 4.5 && favorableMovement) return 'MAX';
   if (edge >= 1.5 && ev >= 2) return 'A';
-  if (edge >= 0.75 && ev >= 0.75) return 'B';
-  if (edge >= 0.15 && ev >= 0.15) return 'C';
+  if (edge >= 0.9 && ev >= 1.1) return 'B';
+  if (edge >= 0.65 && ev >= 0.75) return 'C';
 
   return null;
 }
@@ -356,10 +356,19 @@ function passesSanityFilters(
   modelProb: number,
   bestOdds: number,
   edge: number,
-  ev: number
+  ev: number,
+  marketType: MarketType
 ): boolean {
   if (edge > MAX_REASONABLE_EDGE) return false;
   if (ev > MAX_REASONABLE_EV) return false;
+
+  if (marketType === 'moneyline' && bestOdds >= 180 && edge < 3.5) {
+    return false;
+  }
+
+  if (marketType === 'moneyline' && bestOdds >= 250 && edge < 5) {
+    return false;
+  }
 
   if (
     modelProb > MAX_REASONABLE_DOG_PROB &&
@@ -616,7 +625,11 @@ function buildMoneylineCandidates(
     const edge = (modelProb - implied) * 100;
     const ev = expectedValuePercent(modelProb, best.price);
 
-    if (!passesSanityFilters(modelProb, best.price, edge, ev)) continue;
+    if (
+      !passesSanityFilters(modelProb, best.price, edge, ev, 'moneyline')
+    ) {
+      continue;
+    }
 
     const baseCandidate: Candidate = {
       sport: sportLabel(event.sport_key),
@@ -756,7 +769,9 @@ function buildSpreadCandidates(
     const edge = (modelProb - implied) * 100;
     const ev = expectedValuePercent(modelProb, best.price);
 
-    if (!passesSanityFilters(modelProb, best.price, edge, ev)) continue;
+    if (!passesSanityFilters(modelProb, best.price, edge, ev, 'spread')) {
+      continue;
+    }
 
     const pointText = point > 0 ? `+${point}` : `${point}`;
 
@@ -908,7 +923,9 @@ function buildTotalCandidates(
       const edge = (modelProb - implied) * 100;
       const ev = expectedValuePercent(modelProb, best.price);
 
-      if (!passesSanityFilters(modelProb, best.price, edge, ev)) continue;
+      if (!passesSanityFilters(modelProb, best.price, edge, ev, 'total')) {
+        continue;
+      }
 
       const baseCandidate: Candidate = {
         sport: sportLabel(event.sport_key),
