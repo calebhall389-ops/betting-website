@@ -78,7 +78,9 @@ function getSupabase() {
 
 // ================= ODDS HELPERS =================
 function impliedProbability(odds: number) {
-  return odds > 0 ? 100 / (odds + 100) : Math.abs(odds) / (Math.abs(odds) + 100);
+  return odds > 0
+    ? 100 / (odds + 100)
+    : Math.abs(odds) / (Math.abs(odds) + 100);
 }
 
 function decimalOdds(odds: number) {
@@ -87,6 +89,7 @@ function decimalOdds(odds: number) {
 
 function americanOdds(prob: number) {
   if (prob <= 0 || prob >= 1) return 0;
+
   return prob >= 0.5
     ? Math.round((-100 * prob) / (1 - prob))
     : Math.round((100 * (1 - prob)) / prob);
@@ -103,7 +106,13 @@ function avg(nums: number[]) {
 
 function noVigTwoWay(a: number, b: number) {
   const total = a + b;
-  if (!total) return { a: 0, b: 0 };
+
+  if (!total) {
+    return {
+      a: 0,
+      b: 0,
+    };
+  }
 
   return {
     a: a / total,
@@ -125,6 +134,7 @@ function cleanSport(sportKey: string) {
   if (sportKey === 'baseball_mlb') return 'MLB';
   if (sportKey === 'basketball_nba') return 'NBA';
   if (sportKey === 'icehockey_nhl') return 'NHL';
+
   return sportKey.toUpperCase();
 }
 
@@ -144,6 +154,7 @@ function getPlayRating(edge: number, ev: number, market: MarketType) {
     if (edge >= 3.25 && ev >= 5) return 'A';
     if (edge >= 2 && ev >= 3) return 'B';
     if (edge >= THRESHOLDS.moneyline.minEdge && ev >= THRESHOLDS.moneyline.minEv) return 'C';
+
     return null;
   }
 
@@ -176,7 +187,15 @@ function sortScore(candidate: Candidate) {
 
 // ================= MARKET BUILDERS =================
 function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Candidate[] {
-  const sides: Record<string, { prices: number[]; bestPrice: number; bestBook: string; bestBookKey: string }> = {};
+  const sides: Record<
+    string,
+    {
+      prices: number[];
+      bestPrice: number;
+      bestBook: string;
+      bestBookKey: string;
+    }
+  > = {};
 
   for (const book of event.bookmakers ?? []) {
     if (!ALLOWED_BOOKS.has(book.key)) continue;
@@ -209,7 +228,8 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
   const teams = Object.keys(sides);
   if (teams.length !== 2) return [];
 
-  const [teamA, teamB] = teams;
+  const teamA = teams[0];
+  const teamB = teams[1];
 
   if (
     sides[teamA].prices.length < MIN_BOOKS_PER_SIDE ||
@@ -283,7 +303,6 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
     string,
     {
       prices: number[];
-      points: number[];
       bestPrice: number;
       bestPoint: number;
       bestBook: string;
@@ -298,14 +317,14 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
     if (!market?.outcomes?.length) continue;
 
     for (const outcome of market.outcomes) {
-      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') continue;
+      if (typeof outcome.price !== 'number') continue;
+      if (typeof outcome.point !== 'number') continue;
 
       const key = `${outcome.name}|${outcome.point}`;
 
       if (!sides[key]) {
         sides[key] = {
           prices: [],
-          points: [],
           bestPrice: outcome.price,
           bestPoint: outcome.point,
           bestBook: book.title ?? book.key,
@@ -314,7 +333,6 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
       }
 
       sides[key].prices.push(outcome.price);
-      sides[key].points.push(outcome.point);
 
       if (outcome.price > sides[key].bestPrice) {
         sides[key].bestPrice = outcome.price;
@@ -329,15 +347,22 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
   const groupedByPoint = new Map<string, string[]>();
 
   for (const key of Object.keys(sides)) {
-    const [, point] = key.split('|');
-    if (!groupedByPoint.has(point)) groupedByPoint.set(point, []);
+    const parts = key.split('|');
+    const point = parts[1];
+
+    if (!groupedByPoint.has(point)) {
+      groupedByPoint.set(point, []);
+    }
+
     groupedByPoint.get(point)!.push(key);
   }
 
-  for (const [, keys] of groupedByPoint) {
+  for (const keys of Array.from(groupedByPoint.values())) {
     if (keys.length !== 2) continue;
 
-    const [keyA, keyB] = keys;
+    const keyA = keys[0];
+    const keyB = keys[1];
+
     const sideA = sides[keyA];
     const sideB = sides[keyB];
 
@@ -364,7 +389,7 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
     ];
 
     for (const item of data) {
-      const [team] = item.key.split('|');
+      const team = item.key.split('|')[0];
       const side = sides[item.key];
 
       const implied = impliedProbability(side.bestPrice);
@@ -417,7 +442,6 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
     string,
     {
       prices: number[];
-      points: number[];
       bestPrice: number;
       bestPoint: number;
       bestBook: string;
@@ -432,15 +456,14 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
     if (!market?.outcomes?.length) continue;
 
     for (const outcome of market.outcomes) {
-      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') continue;
+      if (typeof outcome.price !== 'number') continue;
+      if (typeof outcome.point !== 'number') continue;
 
-      const name = outcome.name;
-      const key = `${name}|${outcome.point}`;
+      const key = `${outcome.name}|${outcome.point}`;
 
       if (!sides[key]) {
         sides[key] = {
           prices: [],
-          points: [],
           bestPrice: outcome.price,
           bestPoint: outcome.point,
           bestBook: book.title ?? book.key,
@@ -449,7 +472,6 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
       }
 
       sides[key].prices.push(outcome.price);
-      sides[key].points.push(outcome.point);
 
       if (outcome.price > sides[key].bestPrice) {
         sides[key].bestPrice = outcome.price;
@@ -464,12 +486,17 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
   const groupedByPoint = new Map<string, string[]>();
 
   for (const key of Object.keys(sides)) {
-    const [, point] = key.split('|');
-    if (!groupedByPoint.has(point)) groupedByPoint.set(point, []);
+    const parts = key.split('|');
+    const point = parts[1];
+
+    if (!groupedByPoint.has(point)) {
+      groupedByPoint.set(point, []);
+    }
+
     groupedByPoint.get(point)!.push(key);
   }
 
-  for (const [, keys] of groupedByPoint) {
+  for (const keys of Array.from(groupedByPoint.values())) {
     const overKey = keys.find((k) => k.startsWith('Over|'));
     const underKey = keys.find((k) => k.startsWith('Under|'));
 
@@ -561,9 +588,6 @@ export async function GET() {
     const supabase = getSupabase();
     const nowIso = new Date().toISOString();
 
-    let eventsChecked = 0;
-    let candidatesFound = 0;
-
     const debug = {
       sportsChecked: SPORTS,
       eventsChecked: 0,
@@ -596,10 +620,10 @@ export async function GET() {
       }
 
       for (const event of events) {
-        if (!event?.commence_time || !isValidGameWindow(event.commence_time)) continue;
+        if (!event?.commence_time) continue;
+        if (!isValidGameWindow(event.commence_time)) continue;
         if (!event.bookmakers?.length) continue;
 
-        eventsChecked++;
         debug.eventsChecked++;
 
         const moneylineCandidates = buildMoneylineCandidates(event, sport, nowIso);
@@ -618,8 +642,7 @@ export async function GET() {
       }
     }
 
-    candidatesFound = allCandidates.length;
-    debug.candidatesFound = candidatesFound;
+    debug.candidatesFound = allCandidates.length;
 
     if (!allCandidates.length) {
       await supabase.from('picks').delete().eq('status', 'pregame');
