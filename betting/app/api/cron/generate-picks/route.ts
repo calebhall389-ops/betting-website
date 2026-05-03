@@ -1018,6 +1018,12 @@ export async function GET(req: NextRequest) {
     let eventsChecked = 0;
     let candidatesFound = 0;
 
+    const builderDebug = {
+      moneylineBuilt: 0,
+      spreadBuilt: 0,
+      totalBuilt: 0,
+    };
+
     const allCandidates: Candidate[] = [];
 
     for (const sport of SPORTS) {
@@ -1032,6 +1038,10 @@ export async function GET(req: NextRequest) {
         const moneyline = buildMoneylineCandidates(event, existingPicks, nowIso);
         const spreads = buildSpreadCandidates(event, existingPicks, nowIso);
         const totals = buildTotalCandidates(event, existingPicks, nowIso);
+
+        builderDebug.moneylineBuilt += moneyline.length;
+        builderDebug.spreadBuilt += spreads.length;
+        builderDebug.totalBuilt += totals.length;
 
         const eventCandidates = [...moneyline, ...spreads, ...totals];
 
@@ -1154,6 +1164,7 @@ export async function GET(req: NextRequest) {
           eventsChecked,
           candidatesFound,
           finalSelected: 0,
+          builderDebug,
           marketCounts,
           minBooks: MIN_BOOKS,
           minConsensusBooks: MIN_CONSENSUS_BOOKS,
@@ -1221,6 +1232,7 @@ export async function GET(req: NextRequest) {
         eventsChecked,
         candidatesFound,
         finalSelected: finalCandidates.length,
+        builderDebug,
         marketCounts,
         minBooks: MIN_BOOKS,
         minConsensusBooks: MIN_CONSENSUS_BOOKS,
