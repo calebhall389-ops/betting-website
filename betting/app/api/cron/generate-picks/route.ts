@@ -333,11 +333,6 @@ function getPlayRating(
   if (edge >= 1.5 && ev >= 2) return 'A';
   if (edge >= 0.75 && ev >= 0.85) return 'B';
   if (edge >= 0.05 && ev >= 0.05) return 'C';
-
-  return null;
-}
-  return null;
-}
   }
 
   if (edge >= 3 && ev >= 4.5 && favorableMovement) return 'MAX';
