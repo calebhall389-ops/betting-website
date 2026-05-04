@@ -22,7 +22,7 @@ const SPORTS = ['baseball_mlb', 'basketball_nba', 'icehockey_nhl'];
 const LOOKAHEAD_HOURS = 36;
 const MIN_MINUTES_TO_START = 5;
 const MAX_PICKS_PER_RUN = 10;
-const ONE_PICK_PER_GAME = true;
+const ONE_PICK_PER_GAME = false;
 
 // Real value thresholds
 const MIN_EDGE = 0.25;
