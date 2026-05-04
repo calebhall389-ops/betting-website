@@ -24,8 +24,16 @@ const MIN_MINUTES_TO_START = 5;
 const MAX_PICKS_PER_RUN = 10;
 const ONE_PICK_PER_GAME = true;
 
-const MIN_DISPLAY_EDGE = 0.75;
-const MIN_DISPLAY_EV = 1.0;
+// Softer board settings
+const MIN_EDGE = 0.25;
+const MIN_EV = 0.25;
+
+// Flow fallback settings
+const FLOW_FAVORITES_ENABLED = true;
+const MIN_FLOW_BOOKS = 3;
+const MAX_FLOW_FAVORITE_ODDS = -250;
+const MIN_FLOW_FAVORITE_ODDS = -180;
+const MIN_FLOW_CONFIDENCE = 55;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -116,18 +124,21 @@ function formatPoint(point: number) {
   return point > 0 ? `+${point}` : `${point}`;
 }
 
-function getPlayRating(edge: number, ev: number) {
+function getPlayRating(edge: number, ev: number, flow = false) {
   if (edge >= 5 && ev >= 8) return 'MAX';
   if (edge >= 3 && ev >= 5) return 'A';
   if (edge >= 1.25 && ev >= 2) return 'B';
-  if (edge >= MIN_DISPLAY_EDGE && ev >= MIN_DISPLAY_EV) return 'C';
+  if (edge >= MIN_EDGE && ev >= MIN_EV) return 'C';
+  if (flow) return 'FLOW';
   return null;
 }
 
 function stakeForRating(rating: string) {
   if (rating === 'MAX') return 2;
   if (rating === 'A') return 1.5;
-  return 1;
+  if (rating === 'B') return 1;
+  if (rating === 'C') return 0.75;
+  return 0.5;
 }
 
 function scorePick(p: Candidate) {
@@ -135,12 +146,17 @@ function scorePick(p: Candidate) {
     p.play_rating === 'MAX'
       ? 100
       : p.play_rating === 'A'
-        ? 70
+        ? 75
         : p.play_rating === 'B'
-          ? 40
-          : 10;
+          ? 50
+          : p.play_rating === 'C'
+            ? 25
+            : 10;
 
-  return boost + p.ev + p.edge;
+  const marketBoost =
+    p.market_type === 'moneyline' ? 4 : p.market_type === 'spread' ? 3 : 2;
+
+  return boost + marketBoost + p.ev + p.edge;
 }
 
 function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Candidate[] {
@@ -216,7 +232,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
       pick: `${team} ML`,
       odds: side.bestPrice,
       confidence: `${Math.round(trueProb * 100)}`,
-      analysis: `${team} ML shows value. Best price is ${formatSigned(
+      analysis: `${team} ML shows market value. Best price is ${formatSigned(
         side.bestPrice
       )} at ${side.bestBook}. Model probability is ${(trueProb * 100).toFixed(
         1
@@ -245,6 +261,116 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
   return picks;
 }
 
+function buildFlowFavoriteCandidate(event: any, sport: string, nowIso: string): Candidate[] {
+  if (!FLOW_FAVORITES_ENABLED) return [];
+
+  const sides: Record<
+    string,
+    {
+      prices: number[];
+      bestPrice: number;
+      bestBook: string;
+      bestBookKey: string;
+    }
+  > = {};
+
+  for (const book of event.bookmakers ?? []) {
+    if (!ALLOWED_BOOKS.has(book.key)) continue;
+
+    const market = book.markets?.find((m: any) => m.key === 'h2h');
+    if (!market?.outcomes?.length) continue;
+
+    for (const outcome of market.outcomes) {
+      if (typeof outcome.price !== 'number') continue;
+
+      if (!sides[outcome.name]) {
+        sides[outcome.name] = {
+          prices: [],
+          bestPrice: outcome.price,
+          bestBook: book.title ?? book.key,
+          bestBookKey: book.key,
+        };
+      }
+
+      sides[outcome.name].prices.push(outcome.price);
+
+      if (outcome.price > sides[outcome.name].bestPrice) {
+        sides[outcome.name].bestPrice = outcome.price;
+        sides[outcome.name].bestBook = book.title ?? book.key;
+        sides[outcome.name].bestBookKey = book.key;
+      }
+    }
+  }
+
+  const teams = Object.keys(sides);
+  if (teams.length !== 2) return [];
+
+  const [teamA, teamB] = teams;
+  const avgA = avg(sides[teamA].prices.map(impliedProbability));
+  const avgB = avg(sides[teamB].prices.map(impliedProbability));
+  const nv = noVigTwoWay(avgA, avgB);
+
+  const probs: Record<string, number> = {
+    [teamA]: nv.a,
+    [teamB]: nv.b,
+  };
+
+  const favorite = teams
+    .map((team) => ({
+      team,
+      trueProb: probs[team],
+      side: sides[team],
+    }))
+    .sort((a, b) => b.trueProb - a.trueProb)[0];
+
+  if (!favorite) return [];
+  if (favorite.side.prices.length < MIN_FLOW_BOOKS) return [];
+  if (favorite.trueProb * 100 < MIN_FLOW_CONFIDENCE) return [];
+  if (favorite.side.bestPrice < MAX_FLOW_FAVORITE_ODDS) return [];
+  if (favorite.side.bestPrice > MIN_FLOW_FAVORITE_ODDS) return [];
+
+  const implied = impliedProbability(favorite.side.bestPrice);
+  const edge = (favorite.trueProb - implied) * 100;
+  const ev = expectedValue(favorite.trueProb, favorite.side.bestPrice);
+  const rating = getPlayRating(edge, ev, true);
+  if (!rating) return [];
+
+  const fairLine = americanOdds(favorite.trueProb);
+
+  return [
+    {
+      sport: cleanSport(sport),
+      game: `${event.away_team} at ${event.home_team}`,
+      pick: `${favorite.team} ML`,
+      odds: favorite.side.bestPrice,
+      confidence: `${Math.round(favorite.trueProb * 100)}`,
+      analysis: `${favorite.team} ML is a flow favorite. This is not a pure edge play, but the market consensus has them projected around ${(
+        favorite.trueProb * 100
+      ).toFixed(1)}% with ${favorite.side.prices.length} major books showing the side. Best available price is ${formatSigned(
+        favorite.side.bestPrice
+      )} at ${favorite.side.bestBook}. Estimated edge ${edge.toFixed(
+        2
+      )}%. Estimated EV ${ev.toFixed(2)}%. Fair line is ${formatSigned(
+        fairLine
+      )}. Play rating: ${rating}.`,
+      stake: stakeForRating(rating),
+      result: 'pending',
+      sportsbook: favorite.side.bestBook,
+      sportsbook_key: favorite.side.bestBookKey,
+      status: 'pregame',
+      commence_time: event.commence_time,
+      market_type: 'moneyline',
+      edge,
+      ev,
+      play_rating: rating,
+      max_play: false,
+      is_live: false,
+      event_id: event.id,
+      odds_last_seen_at: nowIso,
+    },
+  ];
+}
+
 function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candidate[] {
   const byLine: Record<string, any[]> = {};
 
@@ -258,7 +384,6 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
       if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') continue;
 
       const key = String(Math.abs(outcome.point));
-
       if (!byLine[key]) byLine[key] = [];
 
       byLine[key].push({
@@ -355,7 +480,6 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
       if (outcome.name !== 'Over' && outcome.name !== 'Under') continue;
 
       const key = String(outcome.point);
-
       if (!byTotal[key]) byTotal[key] = [];
 
       byTotal[key].push({
@@ -437,7 +561,7 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
 }
 
 function selectPicks(candidates: Candidate[], limit: number) {
-  const sorted = candidates.sort((a, b) => scorePick(b) - scorePick(a));
+  const sorted = [...candidates].sort((a, b) => scorePick(b) - scorePick(a));
   const selected: Candidate[] = [];
   const usedGames = new Set<string>();
 
@@ -471,11 +595,15 @@ export async function GET() {
       moneylineBuilt: 0,
       spreadBuilt: 0,
       totalBuilt: 0,
+      flowBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'strict-clean-board',
-      minDisplayEdge: MIN_DISPLAY_EDGE,
-      minDisplayEv: MIN_DISPLAY_EV,
+      mode: 'balanced-board-with-flow-favorites',
+      minEdge: MIN_EDGE,
+      minEv: MIN_EV,
+      flowFavoritesEnabled: FLOW_FAVORITES_ENABLED,
+      onePickPerGame: ONE_PICK_PER_GAME,
+      lookaheadHours: LOOKAHEAD_HOURS,
     };
 
     const candidates: Candidate[] = [];
@@ -494,6 +622,7 @@ export async function GET() {
       if (!Array.isArray(events)) continue;
 
       for (const event of events) {
+        if (!event?.id) continue;
         if (!event?.commence_time) continue;
         if (!isValidGameWindow(event.commence_time)) continue;
         if (!event.bookmakers?.length) continue;
@@ -503,12 +632,14 @@ export async function GET() {
         const ml = buildMoneylineCandidates(event, sport, nowIso);
         const sp = buildSpreadCandidates(event, sport, nowIso);
         const to = buildTotalCandidates(event, sport, nowIso);
+        const flow = buildFlowFavoriteCandidate(event, sport, nowIso);
 
         debug.moneylineBuilt += ml.length;
         debug.spreadBuilt += sp.length;
         debug.totalBuilt += to.length;
+        debug.flowBuilt += flow.length;
 
-        candidates.push(...ml, ...sp, ...to);
+        candidates.push(...ml, ...sp, ...to, ...flow);
       }
     }
 
@@ -523,7 +654,7 @@ export async function GET() {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No qualifying pregame picks found.',
+        message: 'No qualifying pregame picks found. Board was scanned, but no value or flow favorites passed filters.',
         debug,
       });
     }
