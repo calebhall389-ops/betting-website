@@ -24,9 +24,9 @@ const MIN_MINUTES_TO_START = 5;
 const MAX_PICKS_PER_RUN = 10;
 const ONE_PICK_PER_GAME = false;
 
-// Softer value thresholds
-const MIN_EDGE = 0.05;
-const MIN_EV = 0.25;
+// Sharper value thresholds
+const MIN_EDGE = 0.15;
+const MIN_EV = 0.75;
 
 // Flow favorite fallback
 const FLOW_FAVORITES_ENABLED = true;
@@ -35,9 +35,9 @@ const MAX_FLOW_FAVORITE_ODDS = -250;
 const MIN_FLOW_FAVORITE_ODDS = -120;
 const MIN_FLOW_CONFIDENCE = 55;
 
-// More flexible flow favorites
-const MIN_FLOW_EDGE = -2.25;
-const MIN_FLOW_EV = -2.75;
+// Flow filters
+const MIN_FLOW_EDGE = -1.75;
+const MIN_FLOW_EV = -2.25;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -128,20 +128,26 @@ function formatPoint(point: number) {
   return point > 0 ? `+${point}` : `${point}`;
 }
 
-function getPlayRating(edge: number, ev: number, flow = false) {
+function getPlayRating(edge: number, ev: number, odds: number, flow = false) {
+  if (flow) return 'FLOW';
+
+  if (edge < MIN_EDGE || ev < MIN_EV) return null;
+
+  // Blocks weak giant underdogs like +500, +700, etc.
+  if (odds >= 300 && ev < 2) return null;
+
   if (edge >= 5 && ev >= 8) return 'MAX';
   if (edge >= 3 && ev >= 5) return 'A';
-  if (edge >= 1.25 && ev >= 2) return 'B';
-  if (edge >= MIN_EDGE && ev >= MIN_EV) return 'C';
-  if (flow) return 'FLOW';
-  return null;
+  if (edge >= 1.5 && ev >= 3) return 'B';
+
+  return 'C';
 }
 
 function stakeForRating(rating: string) {
   if (rating === 'MAX') return 2;
   if (rating === 'A') return 1.5;
   if (rating === 'B') return 1;
-  if (rating === 'C') return 0.75;
+  if (rating === 'C') return 0.5;
   if (rating === 'FLOW') return 0.25;
   return 0.5;
 }
@@ -156,10 +162,10 @@ function scorePick(p: Candidate) {
           ? 50
           : p.play_rating === 'C'
             ? 25
-            : 10;
+            : 8;
 
   const marketBoost =
-    p.market_type === 'moneyline' ? 4 : p.market_type === 'spread' ? 3 : 2;
+    p.market_type === 'moneyline' ? 3 : p.market_type === 'spread' ? 4 : 4;
 
   return boost + marketBoost + p.ev + p.edge;
 }
@@ -225,7 +231,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
     const implied = impliedProbability(side.bestPrice);
     const edge = (trueProb - implied) * 100;
     const ev = expectedValue(trueProb, side.bestPrice);
-    const rating = getPlayRating(edge, ev);
+    const rating = getPlayRating(edge, ev, side.bestPrice);
 
     if (!rating) continue;
 
@@ -332,8 +338,8 @@ function buildFlowFavoriteCandidate(event: any, sport: string, nowIso: string): 
   if (!favorite) return [];
   if (favorite.side.prices.length < MIN_FLOW_BOOKS) return [];
   if (favorite.trueProb * 100 < MIN_FLOW_CONFIDENCE) return [];
-if (favorite.side.bestPrice < MAX_FLOW_FAVORITE_ODDS) return [];
-if (favorite.side.bestPrice > MIN_FLOW_FAVORITE_ODDS) return [];
+  if (favorite.side.bestPrice < MAX_FLOW_FAVORITE_ODDS) return [];
+  if (favorite.side.bestPrice > MIN_FLOW_FAVORITE_ODDS) return [];
 
   const implied = impliedProbability(favorite.side.bestPrice);
   const edge = (favorite.trueProb - implied) * 100;
@@ -341,7 +347,7 @@ if (favorite.side.bestPrice > MIN_FLOW_FAVORITE_ODDS) return [];
 
   if (edge < MIN_FLOW_EDGE || ev < MIN_FLOW_EV) return [];
 
-  const rating = getPlayRating(edge, ev, true);
+  const rating = getPlayRating(edge, ev, favorite.side.bestPrice, true);
   if (!rating) return [];
 
   const fairLine = americanOdds(favorite.trueProb);
@@ -431,7 +437,7 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
       const implied = impliedProbability(item.side.price);
       const edge = (item.trueProb - implied) * 100;
       const ev = expectedValue(item.trueProb, item.side.price);
-      const rating = getPlayRating(edge, ev);
+      const rating = getPlayRating(edge, ev, item.side.price);
 
       if (!rating) continue;
 
@@ -527,7 +533,7 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
       const implied = impliedProbability(item.side.price);
       const edge = (item.trueProb - implied) * 100;
       const ev = expectedValue(item.trueProb, item.side.price);
-      const rating = getPlayRating(edge, ev);
+      const rating = getPlayRating(edge, ev, item.side.price);
 
       if (!rating) continue;
 
@@ -572,13 +578,15 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
 function selectPicks(candidates: Candidate[], limit: number) {
   const sorted = [...candidates].sort((a, b) => scorePick(b) - scorePick(a));
   const selected: Candidate[] = [];
-  const usedGames = new Set<string>();
+  const seen = new Set<string>();
 
   for (const pick of sorted) {
-    if (ONE_PICK_PER_GAME && usedGames.has(pick.event_id)) continue;
+    const key = `${pick.event_id}-${pick.market_type}-${pick.pick}`;
+
+    if (seen.has(key)) continue;
 
     selected.push(pick);
-    usedGames.add(pick.event_id);
+    seen.add(key);
 
     if (selected.length >= limit) break;
   }
@@ -607,7 +615,7 @@ export async function GET() {
       flowBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'balanced-board-with-filtered-flow-favorites',
+      mode: 'pro-balanced-board',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
       flowFavoritesEnabled: FLOW_FAVORITES_ENABLED,
