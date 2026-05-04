@@ -24,16 +24,20 @@ const MIN_MINUTES_TO_START = 5;
 const MAX_PICKS_PER_RUN = 10;
 const ONE_PICK_PER_GAME = true;
 
-// Softer board settings
+// Real value thresholds
 const MIN_EDGE = 0.25;
 const MIN_EV = 0.25;
 
-// Flow fallback settings
+// Flow favorite fallback
 const FLOW_FAVORITES_ENABLED = true;
 const MIN_FLOW_BOOKS = 3;
 const MAX_FLOW_FAVORITE_ODDS = -250;
 const MIN_FLOW_FAVORITE_ODDS = -180;
 const MIN_FLOW_CONFIDENCE = 55;
+
+// Do not allow ugly negative-EV flow favorites
+const MIN_FLOW_EDGE = -1.25;
+const MIN_FLOW_EV = -1.5;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -138,6 +142,7 @@ function stakeForRating(rating: string) {
   if (rating === 'A') return 1.5;
   if (rating === 'B') return 1;
   if (rating === 'C') return 0.75;
+  if (rating === 'FLOW') return 0.25;
   return 0.5;
 }
 
@@ -306,6 +311,7 @@ function buildFlowFavoriteCandidate(event: any, sport: string, nowIso: string): 
   if (teams.length !== 2) return [];
 
   const [teamA, teamB] = teams;
+
   const avgA = avg(sides[teamA].prices.map(impliedProbability));
   const avgB = avg(sides[teamB].prices.map(impliedProbability));
   const nv = noVigTwoWay(avgA, avgB);
@@ -332,6 +338,9 @@ function buildFlowFavoriteCandidate(event: any, sport: string, nowIso: string): 
   const implied = impliedProbability(favorite.side.bestPrice);
   const edge = (favorite.trueProb - implied) * 100;
   const ev = expectedValue(favorite.trueProb, favorite.side.bestPrice);
+
+  if (edge < MIN_FLOW_EDGE || ev < MIN_FLOW_EV) return [];
+
   const rating = getPlayRating(edge, ev, true);
   if (!rating) return [];
 
@@ -344,7 +353,7 @@ function buildFlowFavoriteCandidate(event: any, sport: string, nowIso: string): 
       pick: `${favorite.team} ML`,
       odds: favorite.side.bestPrice,
       confidence: `${Math.round(favorite.trueProb * 100)}`,
-      analysis: `${favorite.team} ML is a flow favorite. This is not a pure edge play, but the market consensus has them projected around ${(
+      analysis: `${favorite.team} ML is a flow favorite. This is a small lean, not a full edge play. Market consensus has them projected around ${(
         favorite.trueProb * 100
       ).toFixed(1)}% with ${favorite.side.prices.length} major books showing the side. Best available price is ${formatSigned(
         favorite.side.bestPrice
@@ -598,10 +607,12 @@ export async function GET() {
       flowBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'balanced-board-with-flow-favorites',
+      mode: 'balanced-board-with-filtered-flow-favorites',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
       flowFavoritesEnabled: FLOW_FAVORITES_ENABLED,
+      minFlowEdge: MIN_FLOW_EDGE,
+      minFlowEv: MIN_FLOW_EV,
       onePickPerGame: ONE_PICK_PER_GAME,
       lookaheadHours: LOOKAHEAD_HOURS,
     };
@@ -654,7 +665,8 @@ export async function GET() {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No qualifying pregame picks found. Board was scanned, but no value or flow favorites passed filters.',
+        message:
+          'No qualifying pregame picks found. Board scanned, but no value picks or clean flow favorites passed filters.',
         debug,
       });
     }
