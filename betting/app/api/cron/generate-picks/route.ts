@@ -24,9 +24,16 @@ const MIN_MINUTES_TO_START = 5;
 const MAX_PICKS_PER_RUN = 10;
 const ONE_PICK_PER_GAME = false;
 
-// Sharper value thresholds
+// True value thresholds
 const MIN_EDGE = 0.15;
 const MIN_EV = 0.75;
+
+// Best-price fallback
+const MIN_PRICE_GAP = 1.25;
+const MAX_FALLBACK_NEGATIVE_EV = -1.5;
+
+// Model lean settings
+const MODEL_LEANS_ENABLED = true;
 
 // Flow favorite fallback
 const FLOW_FAVORITES_ENABLED = true;
@@ -34,8 +41,6 @@ const MIN_FLOW_BOOKS = 3;
 const MAX_FLOW_FAVORITE_ODDS = -250;
 const MIN_FLOW_FAVORITE_ODDS = -120;
 const MIN_FLOW_CONFIDENCE = 55;
-
-// Flow filters
 const MIN_FLOW_EDGE = -1.75;
 const MIN_FLOW_EV = -2.25;
 
@@ -102,6 +107,21 @@ function noVigTwoWay(a: number, b: number) {
   return total ? { a: a / total, b: b / total } : { a: 0, b: 0 };
 }
 
+function avgAmericanOdds(prices: number[]) {
+  const avgProb = avg(prices.map(impliedProbability));
+  return americanOdds(avgProb);
+}
+
+function bestPriceGap(bestOdds: number, prices: number[]) {
+  const avgLine = avgAmericanOdds(prices);
+  if (avgLine === null) return 0;
+
+  const bestImp = impliedProbability(bestOdds);
+  const avgImp = impliedProbability(avgLine);
+
+  return (avgImp - bestImp) * 100;
+}
+
 function isValidGameWindow(commenceTime: string) {
   const now = Date.now();
   const start = new Date(commenceTime).getTime();
@@ -128,19 +148,52 @@ function formatPoint(point: number) {
   return point > 0 ? `+${point}` : `${point}`;
 }
 
-function getPlayRating(edge: number, ev: number, odds: number, flow = false) {
-  if (flow) return 'FLOW';
-
-  if (edge < MIN_EDGE || ev < MIN_EV) return null;
-
-  // Blocks weak giant underdogs like +500, +700, etc.
-  if (odds >= 300 && ev < 2) return null;
-
+function getValueRating(edge: number, ev: number, odds: number) {
   if (edge >= 5 && ev >= 8) return 'MAX';
   if (edge >= 3 && ev >= 5) return 'A';
   if (edge >= 1.5 && ev >= 3) return 'B';
 
-  return 'C';
+  if (edge >= MIN_EDGE && ev >= MIN_EV) {
+    if (odds >= 300 && ev < 2) return null;
+    return 'C';
+  }
+
+  return null;
+}
+
+function getModelLeanRating(modelProb: number, odds: number) {
+  if (!MODEL_LEANS_ENABLED) return null;
+
+  const pct = modelProb * 100;
+
+  // Favorites the model clearly likes
+  if (pct >= 58 && odds <= -120 && odds >= -250) return 'LEAN';
+
+  // Short dogs / near pick'em sides
+  if (pct >= 54 && odds >= -110 && odds <= 160) return 'LEAN';
+
+  // Spread / total leans near plus money
+  if (pct >= 52.5 && odds >= -115 && odds <= 140) return 'LEAN';
+
+  return null;
+}
+
+function getFinalRating(edge: number, ev: number, odds: number, modelProb: number, prices: number[]) {
+  const valueRating = getValueRating(edge, ev, odds);
+  if (valueRating) return valueRating;
+
+  const gap = bestPriceGap(odds, prices);
+
+  // Best-price fallback: book is meaningfully better than market average
+  if (gap >= MIN_PRICE_GAP && ev > MAX_FALLBACK_NEGATIVE_EV) {
+    if (odds >= 300 && ev < 1.5) return null;
+    return 'C';
+  }
+
+  const leanRating = getModelLeanRating(modelProb, odds);
+  if (leanRating) return leanRating;
+
+  return null;
 }
 
 function stakeForRating(rating: string) {
@@ -148,8 +201,9 @@ function stakeForRating(rating: string) {
   if (rating === 'A') return 1.5;
   if (rating === 'B') return 1;
   if (rating === 'C') return 0.5;
+  if (rating === 'LEAN') return 0.25;
   if (rating === 'FLOW') return 0.25;
-  return 0.5;
+  return 0.25;
 }
 
 function scorePick(p: Candidate) {
@@ -162,7 +216,9 @@ function scorePick(p: Candidate) {
           ? 50
           : p.play_rating === 'C'
             ? 25
-            : 8;
+            : p.play_rating === 'LEAN'
+              ? 12
+              : 8;
 
   const marketBoost =
     p.market_type === 'moneyline' ? 3 : p.market_type === 'spread' ? 4 : 4;
@@ -231,11 +287,19 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
     const implied = impliedProbability(side.bestPrice);
     const edge = (trueProb - implied) * 100;
     const ev = expectedValue(trueProb, side.bestPrice);
-    const rating = getPlayRating(edge, ev, side.bestPrice);
+    const rating = getFinalRating(edge, ev, side.bestPrice, trueProb, side.prices);
 
     if (!rating) continue;
 
     const fairLine = americanOdds(trueProb);
+    const gap = bestPriceGap(side.bestPrice, side.prices);
+
+    const label =
+      rating === 'LEAN'
+        ? 'model lean'
+        : gap >= MIN_PRICE_GAP && ev < MIN_EV
+          ? 'best-price value'
+          : 'market value';
 
     picks.push({
       sport: cleanSport(sport),
@@ -243,7 +307,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
       pick: `${team} ML`,
       odds: side.bestPrice,
       confidence: `${Math.round(trueProb * 100)}`,
-      analysis: `${team} ML shows market value. Best price is ${formatSigned(
+      analysis: `${team} ML is a ${label}. Best price is ${formatSigned(
         side.bestPrice
       )} at ${side.bestBook}. Model probability is ${(trueProb * 100).toFixed(
         1
@@ -251,7 +315,9 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
         1
       )}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(
         2
-      )}%. Fair line is ${formatSigned(fairLine)}. Play rating: ${rating}.`,
+      )}%. Best-price gap ${gap.toFixed(2)}%. Fair line is ${formatSigned(
+        fairLine
+      )}. Play rating: ${rating}.`,
       stake: stakeForRating(rating),
       result: 'pending',
       sportsbook: side.bestBook,
@@ -347,10 +413,8 @@ function buildFlowFavoriteCandidate(event: any, sport: string, nowIso: string): 
 
   if (edge < MIN_FLOW_EDGE || ev < MIN_FLOW_EV) return [];
 
-  const rating = getPlayRating(edge, ev, favorite.side.bestPrice, true);
-  if (!rating) return [];
-
   const fairLine = americanOdds(favorite.trueProb);
+  const gap = bestPriceGap(favorite.side.bestPrice, favorite.side.prices);
 
   return [
     {
@@ -363,12 +427,12 @@ function buildFlowFavoriteCandidate(event: any, sport: string, nowIso: string): 
         favorite.trueProb * 100
       ).toFixed(1)}% with ${favorite.side.prices.length} major books showing the side. Best available price is ${formatSigned(
         favorite.side.bestPrice
-      )} at ${favorite.side.bestBook}. Estimated edge ${edge.toFixed(
+      )} at ${favorite.side.bestBook}. Edge ${edge.toFixed(
         2
-      )}%. Estimated EV ${ev.toFixed(2)}%. Fair line is ${formatSigned(
-        fairLine
-      )}. Play rating: ${rating}.`,
-      stake: stakeForRating(rating),
+      )}%. EV ${ev.toFixed(2)}%. Best-price gap ${gap.toFixed(
+        2
+      )}%. Fair line is ${formatSigned(fairLine)}. Play rating: FLOW.`,
+      stake: stakeForRating('FLOW'),
       result: 'pending',
       sportsbook: favorite.side.bestBook,
       sportsbook_key: favorite.side.bestBookKey,
@@ -377,7 +441,7 @@ function buildFlowFavoriteCandidate(event: any, sport: string, nowIso: string): 
       market_type: 'moneyline',
       edge,
       ev,
-      play_rating: rating,
+      play_rating: 'FLOW',
       max_play: false,
       is_live: false,
       event_id: event.id,
@@ -429,19 +493,27 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
     const nv = noVigTwoWay(plusProb, minusProb);
 
     const pair = [
-      { side: plusBest, trueProb: nv.a },
-      { side: minusBest, trueProb: nv.b },
+      { side: plusBest, trueProb: nv.a, prices: plus.map((r) => r.price) },
+      { side: minusBest, trueProb: nv.b, prices: minus.map((r) => r.price) },
     ];
 
     for (const item of pair) {
       const implied = impliedProbability(item.side.price);
       const edge = (item.trueProb - implied) * 100;
       const ev = expectedValue(item.trueProb, item.side.price);
-      const rating = getPlayRating(edge, ev, item.side.price);
+      const rating = getFinalRating(edge, ev, item.side.price, item.trueProb, item.prices);
 
       if (!rating) continue;
 
       const fairLine = americanOdds(item.trueProb);
+      const gap = bestPriceGap(item.side.price, item.prices);
+
+      const label =
+        rating === 'LEAN'
+          ? 'model lean'
+          : gap >= MIN_PRICE_GAP && ev < MIN_EV
+            ? 'best-price value'
+            : 'value';
 
       picks.push({
         sport: cleanSport(sport),
@@ -451,7 +523,7 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
         confidence: `${Math.round(item.trueProb * 100)}`,
         analysis: `${item.side.team} ${formatPoint(
           item.side.point
-        )} spread shows value. Best price is ${formatSigned(
+        )} spread is a ${label}. Best price is ${formatSigned(
           item.side.price
         )} at ${item.side.book}. Model cover probability is ${(
           item.trueProb * 100
@@ -459,7 +531,9 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
           1
         )}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(
           2
-        )}%. Fair price is ${formatSigned(fairLine)}. Play rating: ${rating}.`,
+        )}%. Best-price gap ${gap.toFixed(2)}%. Fair price is ${formatSigned(
+          fairLine
+        )}. Play rating: ${rating}.`,
         stake: stakeForRating(rating),
         result: 'pending',
         sportsbook: item.side.book,
@@ -525,19 +599,27 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
     const nv = noVigTwoWay(overProb, underProb);
 
     const pair = [
-      { side: overBest, trueProb: nv.a },
-      { side: underBest, trueProb: nv.b },
+      { side: overBest, trueProb: nv.a, prices: overs.map((r) => r.price) },
+      { side: underBest, trueProb: nv.b, prices: unders.map((r) => r.price) },
     ];
 
     for (const item of pair) {
       const implied = impliedProbability(item.side.price);
       const edge = (item.trueProb - implied) * 100;
       const ev = expectedValue(item.trueProb, item.side.price);
-      const rating = getPlayRating(edge, ev, item.side.price);
+      const rating = getFinalRating(edge, ev, item.side.price, item.trueProb, item.prices);
 
       if (!rating) continue;
 
       const fairLine = americanOdds(item.trueProb);
+      const gap = bestPriceGap(item.side.price, item.prices);
+
+      const label =
+        rating === 'LEAN'
+          ? 'model lean'
+          : gap >= MIN_PRICE_GAP && ev < MIN_EV
+            ? 'best-price value'
+            : 'value';
 
       picks.push({
         sport: cleanSport(sport),
@@ -545,7 +627,7 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
         pick: `${item.side.label} ${item.side.point}`,
         odds: item.side.price,
         confidence: `${Math.round(item.trueProb * 100)}`,
-        analysis: `${item.side.label} ${item.side.point} total shows value. Best price is ${formatSigned(
+        analysis: `${item.side.label} ${item.side.point} total is a ${label}. Best price is ${formatSigned(
           item.side.price
         )} at ${item.side.book}. Model hit probability is ${(
           item.trueProb * 100
@@ -553,7 +635,9 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
           1
         )}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(
           2
-        )}%. Fair price is ${formatSigned(fairLine)}. Play rating: ${rating}.`,
+        )}%. Best-price gap ${gap.toFixed(2)}%. Fair price is ${formatSigned(
+          fairLine
+        )}. Play rating: ${rating}.`,
         stake: stakeForRating(rating),
         result: 'pending',
         sportsbook: item.side.book,
@@ -585,6 +669,11 @@ function selectPicks(candidates: Candidate[], limit: number) {
 
     if (seen.has(key)) continue;
 
+    if (ONE_PICK_PER_GAME) {
+      const alreadyGame = selected.some((p) => p.event_id === pick.event_id);
+      if (alreadyGame) continue;
+    }
+
     selected.push(pick);
     seen.add(key);
 
@@ -615,12 +704,12 @@ export async function GET() {
       flowBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'pro-balanced-board',
+      mode: 'value-plus-best-price-plus-model-leans',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
+      minPriceGap: MIN_PRICE_GAP,
+      modelLeansEnabled: MODEL_LEANS_ENABLED,
       flowFavoritesEnabled: FLOW_FAVORITES_ENABLED,
-      minFlowEdge: MIN_FLOW_EDGE,
-      minFlowEv: MIN_FLOW_EV,
       onePickPerGame: ONE_PICK_PER_GAME,
       lookaheadHours: LOOKAHEAD_HOURS,
     };
@@ -674,7 +763,7 @@ export async function GET() {
         success: true,
         inserted: 0,
         message:
-          'No qualifying pregame picks found. Board scanned, but no value picks or clean flow favorites passed filters.',
+          'No qualifying pregame picks found. Board scanned, but no value picks, best-price plays, model leans, or flow favorites passed filters.',
         debug,
       });
     }
