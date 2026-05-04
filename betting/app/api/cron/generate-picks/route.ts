@@ -24,25 +24,21 @@ const MIN_MINUTES_TO_START = 5;
 const MAX_PICKS_PER_RUN = 10;
 const ONE_PICK_PER_GAME = false;
 
-// True value thresholds
-const MIN_EDGE = 0.15;
-const MIN_EV = 0.75;
+// Clean value thresholds
+const MIN_C_EDGE = 0.25;
+const MIN_C_EV = 1.0;
 
-// Best-price fallback
-const MIN_PRICE_GAP = 1.25;
-const MAX_FALLBACK_NEGATIVE_EV = -1.5;
-
-// Model lean settings
+// Model leans
 const MODEL_LEANS_ENABLED = true;
 
 // Flow favorite fallback
 const FLOW_FAVORITES_ENABLED = true;
-const MIN_FLOW_BOOKS = 3;
+const MIN_FLOW_BOOKS = 4;
 const MAX_FLOW_FAVORITE_ODDS = -250;
 const MIN_FLOW_FAVORITE_ODDS = -120;
-const MIN_FLOW_CONFIDENCE = 55;
-const MIN_FLOW_EDGE = -1.75;
-const MIN_FLOW_EV = -2.25;
+const MIN_FLOW_CONFIDENCE = 58;
+const MIN_FLOW_EDGE = -1.0;
+const MIN_FLOW_EV = -1.0;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -51,6 +47,8 @@ type Candidate = {
   game: string;
   pick: string;
   odds: number;
+  fair_line: number | null;
+  fair_odds: number | null;
   confidence: string;
   analysis: string;
   stake: number;
@@ -107,21 +105,6 @@ function noVigTwoWay(a: number, b: number) {
   return total ? { a: a / total, b: b / total } : { a: 0, b: 0 };
 }
 
-function avgAmericanOdds(prices: number[]) {
-  const avgProb = avg(prices.map(impliedProbability));
-  return americanOdds(avgProb);
-}
-
-function bestPriceGap(bestOdds: number, prices: number[]) {
-  const avgLine = avgAmericanOdds(prices);
-  if (avgLine === null) return 0;
-
-  const bestImp = impliedProbability(bestOdds);
-  const avgImp = impliedProbability(avgLine);
-
-  return (avgImp - bestImp) * 100;
-}
-
 function isValidGameWindow(commenceTime: string) {
   const now = Date.now();
   const start = new Date(commenceTime).getTime();
@@ -148,50 +131,24 @@ function formatPoint(point: number) {
   return point > 0 ? `+${point}` : `${point}`;
 }
 
-function getValueRating(edge: number, ev: number, odds: number) {
+function getFinalRating(edge: number, ev: number, odds: number, modelProb: number) {
+  // Real value plays
   if (edge >= 5 && ev >= 8) return 'MAX';
   if (edge >= 3 && ev >= 5) return 'A';
   if (edge >= 1.5 && ev >= 3) return 'B';
 
-  if (edge >= MIN_EDGE && ev >= MIN_EV) {
+  if (edge >= MIN_C_EDGE && ev >= MIN_C_EV) {
     if (odds >= 300 && ev < 2) return null;
     return 'C';
   }
 
-  return null;
-}
-
-function getModelLeanRating(modelProb: number, odds: number) {
+  // Strong model leans only
   if (!MODEL_LEANS_ENABLED) return null;
 
   const pct = modelProb * 100;
 
-  // Favorites the model clearly likes
-  if (pct >= 58 && odds <= -120 && odds >= -250) return 'LEAN';
-
-  // Short dogs / near pick'em sides
-  if (pct >= 54 && odds >= -110 && odds <= 160) return 'LEAN';
-
-  // Spread / total leans near plus money
-  if (pct >= 52.5 && odds >= -115 && odds <= 140) return 'LEAN';
-
-  return null;
-}
-
-function getFinalRating(edge: number, ev: number, odds: number, modelProb: number, prices: number[]) {
-  const valueRating = getValueRating(edge, ev, odds);
-  if (valueRating) return valueRating;
-
-  const gap = bestPriceGap(odds, prices);
-
-  // Best-price fallback: book is meaningfully better than market average
-  if (gap >= MIN_PRICE_GAP && ev > MAX_FALLBACK_NEGATIVE_EV) {
-    if (odds >= 300 && ev < 1.5) return null;
-    return 'C';
-  }
-
-  const leanRating = getModelLeanRating(modelProb, odds);
-  if (leanRating) return leanRating;
+  if (pct >= 58 && odds <= -120 && odds >= -250 && ev > -1) return 'LEAN';
+  if (pct >= 55 && odds >= -110 && odds <= 150 && ev > -1) return 'LEAN';
 
   return null;
 }
@@ -221,7 +178,7 @@ function scorePick(p: Candidate) {
               : 8;
 
   const marketBoost =
-    p.market_type === 'moneyline' ? 3 : p.market_type === 'spread' ? 4 : 4;
+    p.market_type === 'spread' ? 4 : p.market_type === 'total' ? 4 : 3;
 
   return boost + marketBoost + p.ev + p.edge;
 }
@@ -287,37 +244,32 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
     const implied = impliedProbability(side.bestPrice);
     const edge = (trueProb - implied) * 100;
     const ev = expectedValue(trueProb, side.bestPrice);
-    const rating = getFinalRating(edge, ev, side.bestPrice, trueProb, side.prices);
+    const fairLine = americanOdds(trueProb);
+    const rating = getFinalRating(edge, ev, side.bestPrice, trueProb);
 
     if (!rating) continue;
 
-    const fairLine = americanOdds(trueProb);
-    const gap = bestPriceGap(side.bestPrice, side.prices);
-
-    const label =
-      rating === 'LEAN'
-        ? 'model lean'
-        : gap >= MIN_PRICE_GAP && ev < MIN_EV
-          ? 'best-price value'
-          : 'market value';
+    const label = rating === 'LEAN' ? 'model lean' : 'value play';
 
     picks.push({
       sport: cleanSport(sport),
       game: `${event.away_team} at ${event.home_team}`,
       pick: `${team} ML`,
       odds: side.bestPrice,
+      fair_line: fairLine,
+      fair_odds: fairLine,
       confidence: `${Math.round(trueProb * 100)}`,
       analysis: `${team} ML is a ${label}. Best price is ${formatSigned(
         side.bestPrice
-      )} at ${side.bestBook}. Model probability is ${(trueProb * 100).toFixed(
+      )} at ${side.bestBook}. Fair odds are ${formatSigned(
+        fairLine
+      )}. Model probability is ${(trueProb * 100).toFixed(
         1
       )}%. Market implied probability is ${(implied * 100).toFixed(
         1
       )}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(
         2
-      )}%. Best-price gap ${gap.toFixed(2)}%. Fair line is ${formatSigned(
-        fairLine
-      )}. Play rating: ${rating}.`,
+      )}%. Play rating: ${rating}.`,
       stake: stakeForRating(rating),
       result: 'pending',
       sportsbook: side.bestBook,
@@ -410,11 +362,9 @@ function buildFlowFavoriteCandidate(event: any, sport: string, nowIso: string): 
   const implied = impliedProbability(favorite.side.bestPrice);
   const edge = (favorite.trueProb - implied) * 100;
   const ev = expectedValue(favorite.trueProb, favorite.side.bestPrice);
+  const fairLine = americanOdds(favorite.trueProb);
 
   if (edge < MIN_FLOW_EDGE || ev < MIN_FLOW_EV) return [];
-
-  const fairLine = americanOdds(favorite.trueProb);
-  const gap = bestPriceGap(favorite.side.bestPrice, favorite.side.prices);
 
   return [
     {
@@ -422,16 +372,20 @@ function buildFlowFavoriteCandidate(event: any, sport: string, nowIso: string): 
       game: `${event.away_team} at ${event.home_team}`,
       pick: `${favorite.team} ML`,
       odds: favorite.side.bestPrice,
+      fair_line: fairLine,
+      fair_odds: fairLine,
       confidence: `${Math.round(favorite.trueProb * 100)}`,
-      analysis: `${favorite.team} ML is a flow favorite. This is a small lean, not a full edge play. Market consensus has them projected around ${(
-        favorite.trueProb * 100
-      ).toFixed(1)}% with ${favorite.side.prices.length} major books showing the side. Best available price is ${formatSigned(
+      analysis: `${favorite.team} ML is a flow favorite. This is a small lean, not a full edge play. Best available price is ${formatSigned(
         favorite.side.bestPrice
-      )} at ${favorite.side.bestBook}. Edge ${edge.toFixed(
+      )} at ${favorite.side.bestBook}. Fair odds are ${formatSigned(
+        fairLine
+      )}. Model probability is ${(favorite.trueProb * 100).toFixed(
+        1
+      )}%. Market implied probability is ${(implied * 100).toFixed(
+        1
+      )}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(
         2
-      )}%. EV ${ev.toFixed(2)}%. Best-price gap ${gap.toFixed(
-        2
-      )}%. Fair line is ${formatSigned(fairLine)}. Play rating: FLOW.`,
+      )}%. Play rating: FLOW.`,
       stake: stakeForRating('FLOW'),
       result: 'pending',
       sportsbook: favorite.side.bestBook,
@@ -493,47 +447,42 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
     const nv = noVigTwoWay(plusProb, minusProb);
 
     const pair = [
-      { side: plusBest, trueProb: nv.a, prices: plus.map((r) => r.price) },
-      { side: minusBest, trueProb: nv.b, prices: minus.map((r) => r.price) },
+      { side: plusBest, trueProb: nv.a },
+      { side: minusBest, trueProb: nv.b },
     ];
 
     for (const item of pair) {
       const implied = impliedProbability(item.side.price);
       const edge = (item.trueProb - implied) * 100;
       const ev = expectedValue(item.trueProb, item.side.price);
-      const rating = getFinalRating(edge, ev, item.side.price, item.trueProb, item.prices);
+      const fairLine = americanOdds(item.trueProb);
+      const rating = getFinalRating(edge, ev, item.side.price, item.trueProb);
 
       if (!rating) continue;
 
-      const fairLine = americanOdds(item.trueProb);
-      const gap = bestPriceGap(item.side.price, item.prices);
-
-      const label =
-        rating === 'LEAN'
-          ? 'model lean'
-          : gap >= MIN_PRICE_GAP && ev < MIN_EV
-            ? 'best-price value'
-            : 'value';
+      const label = rating === 'LEAN' ? 'model lean' : 'value play';
 
       picks.push({
         sport: cleanSport(sport),
         game: `${event.away_team} at ${event.home_team}`,
         pick: `${item.side.team} ${formatPoint(item.side.point)}`,
         odds: item.side.price,
+        fair_line: fairLine,
+        fair_odds: fairLine,
         confidence: `${Math.round(item.trueProb * 100)}`,
         analysis: `${item.side.team} ${formatPoint(
           item.side.point
         )} spread is a ${label}. Best price is ${formatSigned(
           item.side.price
-        )} at ${item.side.book}. Model cover probability is ${(
-          item.trueProb * 100
-        ).toFixed(1)}%. Market implied probability is ${(implied * 100).toFixed(
+        )} at ${item.side.book}. Fair odds are ${formatSigned(
+          fairLine
+        )}. Model cover probability is ${(item.trueProb * 100).toFixed(
+          1
+        )}%. Market implied probability is ${(implied * 100).toFixed(
           1
         )}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(
           2
-        )}%. Best-price gap ${gap.toFixed(2)}%. Fair price is ${formatSigned(
-          fairLine
-        )}. Play rating: ${rating}.`,
+        )}%. Play rating: ${rating}.`,
         stake: stakeForRating(rating),
         result: 'pending',
         sportsbook: item.side.book,
@@ -599,45 +548,40 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
     const nv = noVigTwoWay(overProb, underProb);
 
     const pair = [
-      { side: overBest, trueProb: nv.a, prices: overs.map((r) => r.price) },
-      { side: underBest, trueProb: nv.b, prices: unders.map((r) => r.price) },
+      { side: overBest, trueProb: nv.a },
+      { side: underBest, trueProb: nv.b },
     ];
 
     for (const item of pair) {
       const implied = impliedProbability(item.side.price);
       const edge = (item.trueProb - implied) * 100;
       const ev = expectedValue(item.trueProb, item.side.price);
-      const rating = getFinalRating(edge, ev, item.side.price, item.trueProb, item.prices);
+      const fairLine = americanOdds(item.trueProb);
+      const rating = getFinalRating(edge, ev, item.side.price, item.trueProb);
 
       if (!rating) continue;
 
-      const fairLine = americanOdds(item.trueProb);
-      const gap = bestPriceGap(item.side.price, item.prices);
-
-      const label =
-        rating === 'LEAN'
-          ? 'model lean'
-          : gap >= MIN_PRICE_GAP && ev < MIN_EV
-            ? 'best-price value'
-            : 'value';
+      const label = rating === 'LEAN' ? 'model lean' : 'value play';
 
       picks.push({
         sport: cleanSport(sport),
         game: `${event.away_team} at ${event.home_team}`,
         pick: `${item.side.label} ${item.side.point}`,
         odds: item.side.price,
+        fair_line: fairLine,
+        fair_odds: fairLine,
         confidence: `${Math.round(item.trueProb * 100)}`,
         analysis: `${item.side.label} ${item.side.point} total is a ${label}. Best price is ${formatSigned(
           item.side.price
-        )} at ${item.side.book}. Model hit probability is ${(
-          item.trueProb * 100
-        ).toFixed(1)}%. Market implied probability is ${(implied * 100).toFixed(
+        )} at ${item.side.book}. Fair odds are ${formatSigned(
+          fairLine
+        )}. Model hit probability is ${(item.trueProb * 100).toFixed(
+          1
+        )}%. Market implied probability is ${(implied * 100).toFixed(
           1
         )}%. Edge ${edge.toFixed(2)}%. EV ${ev.toFixed(
           2
-        )}%. Best-price gap ${gap.toFixed(2)}%. Fair price is ${formatSigned(
-          fairLine
-        )}. Play rating: ${rating}.`,
+        )}%. Play rating: ${rating}.`,
         stake: stakeForRating(rating),
         result: 'pending',
         sportsbook: item.side.book,
@@ -704,10 +648,9 @@ export async function GET() {
       flowBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'value-plus-best-price-plus-model-leans',
-      minEdge: MIN_EDGE,
-      minEv: MIN_EV,
-      minPriceGap: MIN_PRICE_GAP,
+      mode: 'clean-value-plus-strong-model-leans-with-fair-odds',
+      minCEdge: MIN_C_EDGE,
+      minCEv: MIN_C_EV,
       modelLeansEnabled: MODEL_LEANS_ENABLED,
       flowFavoritesEnabled: FLOW_FAVORITES_ENABLED,
       onePickPerGame: ONE_PICK_PER_GAME,
@@ -763,7 +706,7 @@ export async function GET() {
         success: true,
         inserted: 0,
         message:
-          'No qualifying pregame picks found. Board scanned, but no value picks, best-price plays, model leans, or flow favorites passed filters.',
+          'No qualifying pregame picks found. Board scanned, but no clean value plays, strong model leans, or flow favorites passed filters.',
         debug,
       });
     }
