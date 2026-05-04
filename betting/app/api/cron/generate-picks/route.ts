@@ -24,20 +24,20 @@ const MIN_MINUTES_TO_START = 5;
 const MAX_PICKS_PER_RUN = 10;
 const ONE_PICK_PER_GAME = false;
 
-// Real value thresholds
-const MIN_EDGE = 0.25;
+// Softer value thresholds
+const MIN_EDGE = 0.05;
 const MIN_EV = 0.25;
 
 // Flow favorite fallback
 const FLOW_FAVORITES_ENABLED = true;
 const MIN_FLOW_BOOKS = 3;
 const MAX_FLOW_FAVORITE_ODDS = -250;
-const MIN_FLOW_FAVORITE_ODDS = -180;
+const MIN_FLOW_FAVORITE_ODDS = -120;
 const MIN_FLOW_CONFIDENCE = 55;
 
-// Do not allow ugly negative-EV flow favorites
-const MIN_FLOW_EDGE = -1.25;
-const MIN_FLOW_EV = -1.5;
+// More flexible flow favorites
+const MIN_FLOW_EDGE = -2.25;
+const MIN_FLOW_EV = -2.75;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -332,8 +332,8 @@ function buildFlowFavoriteCandidate(event: any, sport: string, nowIso: string): 
   if (!favorite) return [];
   if (favorite.side.prices.length < MIN_FLOW_BOOKS) return [];
   if (favorite.trueProb * 100 < MIN_FLOW_CONFIDENCE) return [];
-  if (favorite.side.bestPrice < MAX_FLOW_FAVORITE_ODDS) return [];
-  if (favorite.side.bestPrice > MIN_FLOW_FAVORITE_ODDS) return [];
+if (favorite.side.bestPrice < MAX_FLOW_FAVORITE_ODDS) return [];
+if (favorite.side.bestPrice > MIN_FLOW_FAVORITE_ODDS) return [];
 
   const implied = impliedProbability(favorite.side.bestPrice);
   const edge = (favorite.trueProb - implied) * 100;
