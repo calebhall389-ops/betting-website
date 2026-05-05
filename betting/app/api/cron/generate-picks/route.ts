@@ -27,17 +27,8 @@ const ONE_PICK_PER_GAME = true;
 const MIN_BOOKS_ML = 4;
 const MIN_BOOKS_SPREAD_TOTAL = 3;
 
-const MIN_EDGE = 1.25;
-const MIN_EV = 1.5;
-
-const MIN_A_EDGE = 3.5;
-const MIN_A_EV = 5;
-
-const MIN_B_EDGE = 2.25;
-const MIN_B_EV = 3;
-
-const MIN_C_EDGE = 1.25;
-const MIN_C_EV = 1.5;
+const MIN_EDGE = 0.4;
+const MIN_EV = 0.5;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -104,9 +95,11 @@ function median(nums: number[]) {
   const sorted = [...nums].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
 
-  return sorted.length % 2
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) / 2;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function clamp(num: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, num));
 }
 
 function noVigTwoWay(a: number, b: number) {
@@ -149,9 +142,10 @@ function isValidGameWindow(commenceTime: string) {
 
 function getRating(edge: number, ev: number) {
   if (edge >= 5 && ev >= 8) return 'MAX';
-  if (edge >= MIN_A_EDGE && ev >= MIN_A_EV) return 'A';
-  if (edge >= MIN_B_EDGE && ev >= MIN_B_EV) return 'B';
-  if (edge >= MIN_C_EDGE && ev >= MIN_C_EV) return 'C';
+  if (edge >= 3.25 && ev >= 5) return 'A';
+  if (edge >= 2 && ev >= 3) return 'B';
+  if (edge >= 0.9 && ev >= 1.25) return 'C';
+  if (edge >= MIN_EDGE && ev >= MIN_EV) return 'LEAN';
 
   return null;
 }
@@ -161,7 +155,49 @@ function stakeForRating(rating: string) {
   if (rating === 'A') return 1.5;
   if (rating === 'B') return 1;
   if (rating === 'C') return 0.5;
+  if (rating === 'LEAN') return 0.25;
   return 0.25;
+}
+
+function adjustedProbability(params: {
+  consensusProb: number;
+  bestOdds: number;
+  allPrices: number[];
+  marketType: MarketType;
+}) {
+  const { consensusProb, bestOdds, allPrices, marketType } = params;
+
+  const bestImplied = impliedProbability(bestOdds);
+  const avgImplied = avg(allPrices.map(impliedProbability));
+  const medianImplied = median(allPrices.map(impliedProbability));
+
+  const priceAdvantage = avgImplied - bestImplied;
+  const marketAgreement = 1 - Math.abs(avgImplied - medianImplied);
+
+  let adjustment = 0;
+
+  adjustment += clamp(priceAdvantage * 0.35, -0.015, 0.025);
+
+  if (marketAgreement > 0.985) adjustment += 0.004;
+
+  if (marketType === 'spread') adjustment += 0.003;
+  if (marketType === 'total') adjustment += 0.002;
+
+  if (bestOdds >= 250) adjustment -= 0.01;
+  if (bestOdds <= -250) adjustment -= 0.008;
+
+  if (bestOdds >= -140 && bestOdds <= 160) adjustment += 0.004;
+
+  return clamp(consensusProb + adjustment, 0.03, 0.97);
+}
+
+function pickIsSafeEnough(edge: number, ev: number, odds: number) {
+  if (edge < MIN_EDGE || ev < MIN_EV) return false;
+
+  if (odds >= 250 && edge < 1.5) return false;
+  if (odds <= -250 && edge < 1.5) return false;
+
+  return true;
 }
 
 function scorePick(p: Candidate) {
@@ -172,43 +208,24 @@ function scorePick(p: Candidate) {
         ? 75
         : p.play_rating === 'B'
           ? 50
-          : 25;
+          : p.play_rating === 'C'
+            ? 30
+            : 15;
 
-  const marketScore =
-    p.market_type === 'spread' ? 6 : p.market_type === 'total' ? 5 : 4;
+  const marketScore = p.market_type === 'spread' ? 6 : p.market_type === 'total' ? 5 : 4;
 
   const priceSafety =
     p.odds >= -180 && p.odds <= 180
-      ? 4
-      : p.odds >= -250 && p.odds <= 250
+      ? 5
+      : p.odds >= -240 && p.odds <= 240
         ? 2
-        : -4;
+        : -5;
 
   return ratingScore + marketScore + priceSafety + p.edge * 2 + p.ev;
 }
 
-function pickIsSafeEnough(edge: number, ev: number, odds: number) {
-  if (edge < MIN_EDGE || ev < MIN_EV) return false;
-
-  // Avoid huge long-shot traps unless edge is real.
-  if (odds >= 250 && edge < 3.5) return false;
-
-  // Avoid massive favorites unless edge is strong.
-  if (odds <= -250 && edge < 3.5) return false;
-
-  return true;
-}
-
 function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Candidate[] {
-  const sides: Record<
-    string,
-    {
-      prices: number[];
-      bestPrice: number;
-      bestBook: string;
-      bestBookKey: string;
-    }
-  > = {};
+  const sides: Record<string, any> = {};
 
   for (const book of event.bookmakers ?? []) {
     if (!ALLOWED_BOOKS.has(book.key)) continue;
@@ -250,7 +267,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
   const probB = median(sides[teamB].prices.map(impliedProbability));
   const nv = noVigTwoWay(probA, probB);
 
-  const trueProbs: Record<string, number> = {
+  const baseProbs: Record<string, number> = {
     [teamA]: nv.a,
     [teamB]: nv.b,
   };
@@ -259,7 +276,14 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
 
   for (const team of teams) {
     const side = sides[team];
-    const trueProb = trueProbs[team];
+
+    const trueProb = adjustedProbability({
+      consensusProb: baseProbs[team],
+      bestOdds: side.bestPrice,
+      allPrices: side.prices,
+      marketType: 'moneyline',
+    });
+
     const implied = impliedProbability(side.bestPrice);
     const edge = (trueProb - implied) * 100;
     const ev = expectedValue(trueProb, side.bestPrice);
@@ -278,17 +302,15 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
       fair_line: fair,
       fair_odds: fair,
       confidence: `${Math.round(trueProb * 100)}`,
-      analysis: `${team} ML shows real value versus the no-vig market consensus. Best available price is ${formatSigned(
+      analysis: `${team} ML is an adjusted EV play. Best price is ${formatSigned(
         side.bestPrice
-      )} at ${side.bestBook}. Fair odds are ${formatSigned(
+      )} at ${side.bestBook}. Adjusted fair odds are ${formatSigned(
         fair
-      )}. Model probability is ${(trueProb * 100).toFixed(
+      )}. Adjusted win probability is ${(trueProb * 100).toFixed(
         1
       )}%. Market implied probability is ${(implied * 100).toFixed(
         1
-      )}%. Edge: ${edge.toFixed(2)}%. EV: ${ev.toFixed(
-        2
-      )}%. Rating: ${rating}.`,
+      )}%. Edge: ${edge.toFixed(2)}%. EV: ${ev.toFixed(2)}%. Rating: ${rating}.`,
       stake: stakeForRating(rating),
       result: 'pending',
       sportsbook: side.bestBook,
@@ -319,11 +341,9 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
     if (!market?.outcomes?.length) continue;
 
     for (const outcome of market.outcomes) {
-      if (typeof outcome.price !== 'number') continue;
-      if (typeof outcome.point !== 'number') continue;
+      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') continue;
 
       const key = String(Math.abs(outcome.point));
-
       if (!byLine[key]) byLine[key] = [];
 
       byLine[key].push({
@@ -355,15 +375,22 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
     const nv = noVigTwoWay(plusProb, minusProb);
 
     const pair = [
-      { side: plusBest, trueProb: nv.a },
-      { side: minusBest, trueProb: nv.b },
+      { side: plusBest, consensusProb: nv.a, allPrices: plusRows.map((r) => r.price) },
+      { side: minusBest, consensusProb: nv.b, allPrices: minusRows.map((r) => r.price) },
     ];
 
     for (const item of pair) {
+      const trueProb = adjustedProbability({
+        consensusProb: item.consensusProb,
+        bestOdds: item.side.price,
+        allPrices: item.allPrices,
+        marketType: 'spread',
+      });
+
       const implied = impliedProbability(item.side.price);
-      const edge = (item.trueProb - implied) * 100;
-      const ev = expectedValue(item.trueProb, item.side.price);
-      const fair = americanOdds(item.trueProb);
+      const edge = (trueProb - implied) * 100;
+      const ev = expectedValue(trueProb, item.side.price);
+      const fair = americanOdds(trueProb);
 
       if (!pickIsSafeEnough(edge, ev, item.side.price)) continue;
 
@@ -377,20 +404,18 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
         odds: item.side.price,
         fair_line: fair,
         fair_odds: fair,
-        confidence: `${Math.round(item.trueProb * 100)}`,
+        confidence: `${Math.round(trueProb * 100)}`,
         analysis: `${item.side.team} ${formatPoint(
           item.side.point
-        )} is showing spread value versus the no-vig consensus. Best available price is ${formatSigned(
+        )} is an adjusted EV spread play. Best price is ${formatSigned(
           item.side.price
-        )} at ${item.side.book}. Fair odds are ${formatSigned(
+        )} at ${item.side.book}. Adjusted fair odds are ${formatSigned(
           fair
-        )}. Model cover probability is ${(item.trueProb * 100).toFixed(
+        )}. Adjusted cover probability is ${(trueProb * 100).toFixed(
           1
         )}%. Market implied probability is ${(implied * 100).toFixed(
           1
-        )}%. Edge: ${edge.toFixed(2)}%. EV: ${ev.toFixed(
-          2
-        )}%. Rating: ${rating}.`,
+        )}%. Edge: ${edge.toFixed(2)}%. EV: ${ev.toFixed(2)}%. Rating: ${rating}.`,
         stake: stakeForRating(rating),
         result: 'pending',
         sportsbook: item.side.book,
@@ -422,12 +447,10 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
     if (!market?.outcomes?.length) continue;
 
     for (const outcome of market.outcomes) {
-      if (typeof outcome.price !== 'number') continue;
-      if (typeof outcome.point !== 'number') continue;
+      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') continue;
       if (outcome.name !== 'Over' && outcome.name !== 'Under') continue;
 
       const key = String(outcome.point);
-
       if (!byTotal[key]) byTotal[key] = [];
 
       byTotal[key].push({
@@ -459,15 +482,22 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
     const nv = noVigTwoWay(overProb, underProb);
 
     const pair = [
-      { side: overBest, trueProb: nv.a },
-      { side: underBest, trueProb: nv.b },
+      { side: overBest, consensusProb: nv.a, allPrices: overRows.map((r) => r.price) },
+      { side: underBest, consensusProb: nv.b, allPrices: underRows.map((r) => r.price) },
     ];
 
     for (const item of pair) {
+      const trueProb = adjustedProbability({
+        consensusProb: item.consensusProb,
+        bestOdds: item.side.price,
+        allPrices: item.allPrices,
+        marketType: 'total',
+      });
+
       const implied = impliedProbability(item.side.price);
-      const edge = (item.trueProb - implied) * 100;
-      const ev = expectedValue(item.trueProb, item.side.price);
-      const fair = americanOdds(item.trueProb);
+      const edge = (trueProb - implied) * 100;
+      const ev = expectedValue(trueProb, item.side.price);
+      const fair = americanOdds(trueProb);
 
       if (!pickIsSafeEnough(edge, ev, item.side.price)) continue;
 
@@ -481,18 +511,16 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
         odds: item.side.price,
         fair_line: fair,
         fair_odds: fair,
-        confidence: `${Math.round(item.trueProb * 100)}`,
-        analysis: `${item.side.label} ${item.side.point} is showing total value versus the no-vig consensus. Best available price is ${formatSigned(
+        confidence: `${Math.round(trueProb * 100)}`,
+        analysis: `${item.side.label} ${item.side.point} is an adjusted EV total play. Best price is ${formatSigned(
           item.side.price
-        )} at ${item.side.book}. Fair odds are ${formatSigned(
+        )} at ${item.side.book}. Adjusted fair odds are ${formatSigned(
           fair
-        )}. Model hit probability is ${(item.trueProb * 100).toFixed(
+        )}. Adjusted hit probability is ${(trueProb * 100).toFixed(
           1
         )}%. Market implied probability is ${(implied * 100).toFixed(
           1
-        )}%. Edge: ${edge.toFixed(2)}%. EV: ${ev.toFixed(
-          2
-        )}%. Rating: ${rating}.`,
+        )}%. Edge: ${edge.toFixed(2)}%. EV: ${ev.toFixed(2)}%. Rating: ${rating}.`,
         stake: stakeForRating(rating),
         result: 'pending',
         sportsbook: item.side.book,
@@ -524,7 +552,6 @@ function selectPicks(candidates: Candidate[], limit: number) {
     const exactKey = `${pick.event_id}-${pick.market_type}-${pick.pick}`;
 
     if (seenExact.has(exactKey)) continue;
-
     if (ONE_PICK_PER_GAME && seenGames.has(pick.event_id)) continue;
 
     selected.push(pick);
@@ -557,7 +584,7 @@ export async function GET() {
       totalBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'sharp-no-vig-consensus-best-price-only',
+      mode: 'adjusted-ev-model',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
       maxPicksPerRun: MAX_PICKS_PER_RUN,
@@ -588,15 +615,15 @@ export async function GET() {
 
         debug.eventsChecked++;
 
-        const moneyline = buildMoneylineCandidates(event, sport, nowIso);
-        const spread = buildSpreadCandidates(event, sport, nowIso);
-        const total = buildTotalCandidates(event, sport, nowIso);
+        const ml = buildMoneylineCandidates(event, sport, nowIso);
+        const sp = buildSpreadCandidates(event, sport, nowIso);
+        const to = buildTotalCandidates(event, sport, nowIso);
 
-        debug.moneylineBuilt += moneyline.length;
-        debug.spreadBuilt += spread.length;
-        debug.totalBuilt += total.length;
+        debug.moneylineBuilt += ml.length;
+        debug.spreadBuilt += sp.length;
+        debug.totalBuilt += to.length;
 
-        candidates.push(...moneyline, ...spread, ...total);
+        candidates.push(...ml, ...sp, ...to);
       }
     }
 
@@ -612,7 +639,7 @@ export async function GET() {
         success: true,
         inserted: 0,
         message:
-          'No qualifying pregame picks found. Board scanned, but no sharp +EV plays passed the filters.',
+          'No qualifying adjusted EV picks found. Board scanned, but no ML, spread, or total passed filters.',
         debug,
       });
     }
