@@ -92,6 +92,7 @@ function avg(nums: number[]) {
 
 function median(nums: number[]) {
   if (!nums.length) return 0;
+
   const sorted = [...nums].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
 
@@ -104,7 +105,10 @@ function clamp(num: number, min: number, max: number) {
 
 function noVigTwoWay(a: number, b: number) {
   const total = a + b;
-  if (!total) return { a: 0, b: 0 };
+
+  if (!total) {
+    return { a: 0, b: 0 };
+  }
 
   return {
     a: a / total,
@@ -116,6 +120,7 @@ function cleanSport(sportKey: string) {
   if (sportKey === 'baseball_mlb') return 'MLB';
   if (sportKey === 'basketball_nba') return 'NBA';
   if (sportKey === 'icehockey_nhl') return 'NHL';
+
   return sportKey.toUpperCase();
 }
 
@@ -156,6 +161,7 @@ function stakeForRating(rating: string) {
   if (rating === 'B') return 1;
   if (rating === 'C') return 0.5;
   if (rating === 'LEAN') return 0.25;
+
   return 0.25;
 }
 
@@ -194,8 +200,8 @@ function adjustedProbability(params: {
 function pickIsSafeEnough(edge: number, ev: number, odds: number) {
   if (edge < MIN_EDGE || ev < MIN_EV) return false;
 
-  if (odds >= 250 && edge < 1.5) return false;
-  if (odds <= -250 && edge < 1.5) return false;
+  if (odds >= 180 && edge < 2.5) return false;
+  if (odds <= -220 && edge < 2.5) return false;
 
   return true;
 }
@@ -215,17 +221,27 @@ function scorePick(p: Candidate) {
   const marketScore = p.market_type === 'spread' ? 6 : p.market_type === 'total' ? 5 : 4;
 
   const priceSafety =
-    p.odds >= -180 && p.odds <= 180
-      ? 5
-      : p.odds >= -240 && p.odds <= 240
-        ? 2
-        : -5;
+    p.odds >= -140 && p.odds <= 140
+      ? 10
+      : p.odds >= -180 && p.odds <= 180
+        ? 4
+        : p.odds >= -220 && p.odds <= 220
+          ? 0
+          : -10;
 
   return ratingScore + marketScore + priceSafety + p.edge * 2 + p.ev;
 }
 
 function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Candidate[] {
-  const sides: Record<string, any> = {};
+  const sides: Record<
+    string,
+    {
+      prices: number[];
+      bestPrice: number;
+      bestBook: string;
+      bestBookKey: string;
+    }
+  > = {};
 
   for (const book of event.bookmakers ?? []) {
     if (!ALLOWED_BOOKS.has(book.key)) continue;
@@ -256,6 +272,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
   }
 
   const teams = Object.keys(sides);
+
   if (teams.length !== 2) return [];
 
   const [teamA, teamB] = teams;
@@ -292,6 +309,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
     if (!pickIsSafeEnough(edge, ev, side.bestPrice)) continue;
 
     const rating = getRating(edge, ev);
+
     if (!rating) continue;
 
     picks.push({
@@ -341,9 +359,11 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
     if (!market?.outcomes?.length) continue;
 
     for (const outcome of market.outcomes) {
-      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') continue;
+      if (typeof outcome.price !== 'number') continue;
+      if (typeof outcome.point !== 'number') continue;
 
       const key = String(Math.abs(outcome.point));
+
       if (!byLine[key]) byLine[key] = [];
 
       byLine[key].push({
@@ -375,8 +395,16 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
     const nv = noVigTwoWay(plusProb, minusProb);
 
     const pair = [
-      { side: plusBest, consensusProb: nv.a, allPrices: plusRows.map((r) => r.price) },
-      { side: minusBest, consensusProb: nv.b, allPrices: minusRows.map((r) => r.price) },
+      {
+        side: plusBest,
+        consensusProb: nv.a,
+        allPrices: plusRows.map((r) => r.price),
+      },
+      {
+        side: minusBest,
+        consensusProb: nv.b,
+        allPrices: minusRows.map((r) => r.price),
+      },
     ];
 
     for (const item of pair) {
@@ -395,6 +423,7 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
       if (!pickIsSafeEnough(edge, ev, item.side.price)) continue;
 
       const rating = getRating(edge, ev);
+
       if (!rating) continue;
 
       picks.push({
@@ -447,10 +476,12 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
     if (!market?.outcomes?.length) continue;
 
     for (const outcome of market.outcomes) {
-      if (typeof outcome.price !== 'number' || typeof outcome.point !== 'number') continue;
+      if (typeof outcome.price !== 'number') continue;
+      if (typeof outcome.point !== 'number') continue;
       if (outcome.name !== 'Over' && outcome.name !== 'Under') continue;
 
       const key = String(outcome.point);
+
       if (!byTotal[key]) byTotal[key] = [];
 
       byTotal[key].push({
@@ -482,8 +513,16 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
     const nv = noVigTwoWay(overProb, underProb);
 
     const pair = [
-      { side: overBest, consensusProb: nv.a, allPrices: overRows.map((r) => r.price) },
-      { side: underBest, consensusProb: nv.b, allPrices: underRows.map((r) => r.price) },
+      {
+        side: overBest,
+        consensusProb: nv.a,
+        allPrices: overRows.map((r) => r.price),
+      },
+      {
+        side: underBest,
+        consensusProb: nv.b,
+        allPrices: underRows.map((r) => r.price),
+      },
     ];
 
     for (const item of pair) {
@@ -502,6 +541,7 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
       if (!pickIsSafeEnough(edge, ev, item.side.price)) continue;
 
       const rating = getRating(edge, ev);
+
       if (!rating) continue;
 
       picks.push({
@@ -584,7 +624,7 @@ export async function GET() {
       totalBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'adjusted-ev-model',
+      mode: 'adjusted-ev-clean-price-model',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
       maxPicksPerRun: MAX_PICKS_PER_RUN,
