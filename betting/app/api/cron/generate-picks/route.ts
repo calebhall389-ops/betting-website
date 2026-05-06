@@ -21,14 +21,14 @@ const ALLOWED_BOOKS = new Set([
 
 const LOOKAHEAD_HOURS = 40;
 const MIN_MINUTES_TO_START = 15;
-const MAX_PICKS_PER_RUN = 6;
+const MAX_PICKS_PER_RUN = 3;
 const ONE_PICK_PER_GAME = true;
 
 const MIN_BOOKS_ML = 4;
 const MIN_BOOKS_SPREAD_TOTAL = 3;
 
-const MIN_EDGE = 0.4;
-const MIN_EV = 0.5;
+const MIN_EDGE = 1.25;
+const MIN_EV = 2.0;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -147,8 +147,7 @@ function getRating(edge: number, ev: number) {
   if (edge >= 5 && ev >= 8) return 'MAX';
   if (edge >= 3.25 && ev >= 5) return 'A';
   if (edge >= 2 && ev >= 3) return 'B';
-  if (edge >= 0.9 && ev >= 1.25) return 'C';
-  if (edge >= MIN_EDGE && ev >= MIN_EV) return 'LEAN';
+  if (edge >= 1.25 && ev >= 2) return 'C';
 
   return null;
 }
@@ -158,9 +157,8 @@ function stakeForRating(rating: string) {
   if (rating === 'A') return 1.5;
   if (rating === 'B') return 1;
   if (rating === 'C') return 0.5;
-  if (rating === 'LEAN') return 0.25;
 
-  return 0.25;
+  return 0.5;
 }
 
 function adjustedProbability(params: {
@@ -204,8 +202,6 @@ function pickIsSafeEnough(
 ) {
   if (edge < MIN_EDGE || ev < MIN_EV) return false;
 
-  // Hard filter: avoid volatile MLB/NHL run-line and puck-line plus-money plays
-  // unless the edge is actually strong.
   if (
     (sport === 'MLB' || sport === 'NHL') &&
     marketType === 'spread' &&
@@ -229,9 +225,7 @@ function scorePick(p: Candidate) {
         ? 75
         : p.play_rating === 'B'
           ? 50
-          : p.play_rating === 'C'
-            ? 30
-            : 15;
+          : 30;
 
   let marketScore =
     p.market_type === 'spread'
@@ -649,7 +643,7 @@ export async function GET() {
       totalBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'adjusted-ev-with-hard-runline-puckline-filter',
+      mode: 'quality-only-adjusted-ev-no-leans',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
       maxPicksPerRun: MAX_PICKS_PER_RUN,
@@ -704,7 +698,7 @@ export async function GET() {
         success: true,
         inserted: 0,
         message:
-          'No qualifying adjusted EV picks found. Board scanned, but no ML, spread, or total passed filters.',
+          'No quality pregame picks found. Board scanned, but no adjusted EV plays passed the stricter filters.',
         debug,
       });
     }
