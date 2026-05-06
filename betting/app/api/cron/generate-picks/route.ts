@@ -195,8 +195,25 @@ function adjustedProbability(params: {
   return clamp(consensusProb + adjustment, 0.03, 0.97);
 }
 
-function pickIsSafeEnough(edge: number, ev: number, odds: number) {
+function pickIsSafeEnough(
+  edge: number,
+  ev: number,
+  odds: number,
+  sport?: string,
+  marketType?: MarketType
+) {
   if (edge < MIN_EDGE || ev < MIN_EV) return false;
+
+  // Hard filter: avoid volatile MLB/NHL run-line and puck-line plus-money plays
+  // unless the edge is actually strong.
+  if (
+    (sport === 'MLB' || sport === 'NHL') &&
+    marketType === 'spread' &&
+    odds > 120 &&
+    edge < 3
+  ) {
+    return false;
+  }
 
   if (odds >= 180 && edge < 2.5) return false;
   if (odds <= -220 && edge < 2.5) return false;
@@ -222,12 +239,10 @@ function scorePick(p: Candidate) {
       : p.market_type === 'total'
         ? 5
         : 4;
-if (
-  (p.sport === 'MLB' || p.sport === 'NHL') &&
-  p.market_type === 'spread'
-) {
-  marketScore -= 6;
-}
+
+  if ((p.sport === 'MLB' || p.sport === 'NHL') && p.market_type === 'spread') {
+    marketScore -= 6;
+  }
 
   const priceSafety =
     p.odds >= -140 && p.odds <= 140
@@ -242,6 +257,8 @@ if (
 }
 
 function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Candidate[] {
+  const sportLabel = cleanSport(sport);
+
   const sides: Record<
     string,
     {
@@ -315,13 +332,13 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
     const ev = expectedValue(trueProb, side.bestPrice);
     const fair = americanOdds(trueProb);
 
-    if (!pickIsSafeEnough(edge, ev, side.bestPrice)) continue;
+    if (!pickIsSafeEnough(edge, ev, side.bestPrice, sportLabel, 'moneyline')) continue;
 
     const rating = getRating(edge, ev);
     if (!rating) continue;
 
     picks.push({
-      sport: cleanSport(sport),
+      sport: sportLabel,
       game: `${event.away_team} at ${event.home_team}`,
       pick: `${team} ML`,
       odds: side.bestPrice,
@@ -358,6 +375,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
 }
 
 function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candidate[] {
+  const sportLabel = cleanSport(sport);
   const byLine: Record<string, any[]> = {};
 
   for (const book of event.bookmakers ?? []) {
@@ -428,13 +446,13 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
       const ev = expectedValue(trueProb, item.side.price);
       const fair = americanOdds(trueProb);
 
-      if (!pickIsSafeEnough(edge, ev, item.side.price)) continue;
+      if (!pickIsSafeEnough(edge, ev, item.side.price, sportLabel, 'spread')) continue;
 
       const rating = getRating(edge, ev);
       if (!rating) continue;
 
       picks.push({
-        sport: cleanSport(sport),
+        sport: sportLabel,
         game: `${event.away_team} at ${event.home_team}`,
         pick: `${item.side.team} ${formatPoint(item.side.point)}`,
         odds: item.side.price,
@@ -474,6 +492,7 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
 }
 
 function buildTotalCandidates(event: any, sport: string, nowIso: string): Candidate[] {
+  const sportLabel = cleanSport(sport);
   const byTotal: Record<string, any[]> = {};
 
   for (const book of event.bookmakers ?? []) {
@@ -545,13 +564,13 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
       const ev = expectedValue(trueProb, item.side.price);
       const fair = americanOdds(trueProb);
 
-      if (!pickIsSafeEnough(edge, ev, item.side.price)) continue;
+      if (!pickIsSafeEnough(edge, ev, item.side.price, sportLabel, 'total')) continue;
 
       const rating = getRating(edge, ev);
       if (!rating) continue;
 
       picks.push({
-        sport: cleanSport(sport),
+        sport: sportLabel,
         game: `${event.away_team} at ${event.home_team}`,
         pick: `${item.side.label} ${item.side.point}`,
         odds: item.side.price,
@@ -630,7 +649,7 @@ export async function GET() {
       totalBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'adjusted-ev-clean-price-model-with-mlb-runline-penalty',
+      mode: 'adjusted-ev-with-hard-runline-puckline-filter',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
       maxPicksPerRun: MAX_PICKS_PER_RUN,
