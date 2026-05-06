@@ -222,10 +222,12 @@ function scorePick(p: Candidate) {
       : p.market_type === 'total'
         ? 5
         : 4;
-
-  if (p.sport === 'MLB' && p.market_type === 'spread') {
-    marketScore -= 4;
-  }
+if (
+  (p.sport === 'MLB' || p.sport === 'NHL') &&
+  p.market_type === 'spread'
+) {
+  marketScore -= 6;
+}
 
   const priceSafety =
     p.odds >= -140 && p.odds <= 140
