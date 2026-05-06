@@ -25,14 +25,15 @@ const MAX_PICKS_PER_RUN = 5;
 const ONE_PICK_PER_GAME = true;
 
 const MIN_BOOKS_ML = 3;
-const MIN_BOOKS_SPREAD_TOTAL = 3;
+const MIN_BOOKS_SPREAD_TOTAL = 2;
 
-const MIN_EDGE = 1.15;
-const MIN_EV = 2.25;
+const MIN_EDGE = 0.95;
+const MIN_EV = 1.75;
 
-const FALLBACK_MIN_EDGE = 0.85;
-const FALLBACK_MIN_EV = 1.5;
+const FALLBACK_MIN_EDGE = 0.55;
+const FALLBACK_MIN_EV = 0.85;
 const ENABLE_BEST_AVAILABLE_FALLBACK = true;
+const MAX_FALLBACK_PICKS = 3;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -105,8 +106,10 @@ function avg(nums: number[]) {
 
 function median(nums: number[]) {
   if (!nums.length) return 0;
+
   const sorted = [...nums].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
+
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
@@ -116,13 +119,16 @@ function clamp(num: number, min: number, max: number) {
 
 function standardDeviation(nums: number[]) {
   if (nums.length < 2) return 0;
+
   const mean = avg(nums);
   const variance = avg(nums.map((n) => Math.pow(n - mean, 2)));
+
   return Math.sqrt(variance);
 }
 
 function noVigTwoWay(a: number, b: number) {
   const total = a + b;
+
   if (!total) return { a: 0, b: 0 };
 
   return {
@@ -135,6 +141,7 @@ function cleanSport(sportKey: string) {
   if (sportKey === 'baseball_mlb') return 'MLB';
   if (sportKey === 'basketball_nba') return 'NBA';
   if (sportKey === 'icehockey_nhl') return 'NHL';
+
   return sportKey.toUpperCase();
 }
 
@@ -192,11 +199,14 @@ function getMarketSignals(prices: number[], bestOdds: number, bestBookKey: strin
   };
 }
 
-function getRating(edge: number, ev: number, score: number) {
+function getRating(edge: number, ev: number, score: number, fallback = false) {
+  if (fallback) return 'BEST';
+
   if (edge >= 4.5 && ev >= 7 && score >= 80) return 'MAX';
   if (edge >= 3 && ev >= 5 && score >= 68) return 'A';
   if (edge >= 1.75 && ev >= 3 && score >= 54) return 'B';
-  if (edge >= 1.05 && ev >= 2) return 'C';
+  if (edge >= 0.95 && ev >= 1.75) return 'C';
+
   return null;
 }
 
@@ -204,7 +214,10 @@ function stakeForRating(rating: string) {
   if (rating === 'MAX') return 2;
   if (rating === 'A') return 1.5;
   if (rating === 'B') return 1;
-  return 0.5;
+  if (rating === 'C') return 0.5;
+  if (rating === 'BEST') return 0.25;
+
+  return 0.25;
 }
 
 function adjustedProbability(params: {
@@ -220,21 +233,23 @@ function adjustedProbability(params: {
 
   let adjustment = 0;
 
-  adjustment += clamp(signals.priceGap * 0.55, -0.018, 0.035);
+  adjustment += clamp(signals.priceGap * 0.62, -0.02, 0.04);
 
-  if (signals.disagreement >= 0.018) adjustment += 0.006;
-  if (signals.disagreement >= 0.028) adjustment += 0.006;
+  if (signals.disagreement >= 0.014) adjustment += 0.004;
+  if (signals.disagreement >= 0.024) adjustment += 0.006;
+  if (signals.disagreement >= 0.034) adjustment += 0.004;
 
   if (signals.bestBookBoost >= 1.05) adjustment += 0.004;
 
   if (marketType === 'spread') adjustment += 0.004;
   if (marketType === 'total') adjustment += 0.003;
 
-  if (bestOdds >= 220) adjustment -= 0.008;
+  if (bestOdds >= 220) adjustment -= 0.006;
   if (bestOdds >= 300) adjustment -= 0.012;
-  if (bestOdds <= -240) adjustment -= 0.01;
+  if (bestOdds <= -240) adjustment -= 0.008;
+  if (bestOdds <= -320) adjustment -= 0.012;
 
-  if (bestOdds >= -160 && bestOdds <= 160) adjustment += 0.005;
+  if (bestOdds >= -165 && bestOdds <= 165) adjustment += 0.006;
 
   return clamp(consensusProb + adjustment, 0.03, 0.97);
 }
@@ -263,14 +278,16 @@ function qualityScore(params: {
   if (marketType === 'total') score += 4;
   if (marketType === 'moneyline') score += 3;
 
-  if ((sport === 'MLB' || sport === 'NHL') && marketType === 'spread') score -= 6;
+  if ((sport === 'MLB' || sport === 'NHL') && marketType === 'spread') {
+    score -= 6;
+  }
 
-  if (odds >= -155 && odds <= 155) score += 8;
-  else if (odds >= -200 && odds <= 200) score += 3;
+  if (odds >= -165 && odds <= 165) score += 8;
+  else if (odds >= -210 && odds <= 210) score += 3;
   else score -= 8;
 
-  if (odds >= 220 && edge < 2.25) score -= 10;
-  if (odds <= -240 && edge < 2.25) score -= 10;
+  if (odds >= 240 && edge < 1.5) score -= 8;
+  if (odds <= -260 && edge < 1.5) score -= 8;
 
   return score;
 }
@@ -291,14 +308,19 @@ function pickIsSafeEnough(params: {
 
   if (edge < minEdge || ev < minEv) return false;
 
-  if (score < (fallback ? 36 : 44)) return false;
+  if (score < (fallback ? 26 : 38)) return false;
 
-  if ((sport === 'MLB' || sport === 'NHL') && marketType === 'spread' && odds > 120 && edge < 2.25) {
+  if (
+    (sport === 'MLB' || sport === 'NHL') &&
+    marketType === 'spread' &&
+    odds > 130 &&
+    edge < 1.5
+  ) {
     return false;
   }
 
-  if (odds >= 250 && edge < 1.8) return false;
-  if (odds <= -260 && edge < 1.8) return false;
+  if (odds >= 300 && edge < 1.5) return false;
+  if (odds <= -320 && edge < 1.5) return false;
 
   return true;
 }
@@ -333,7 +355,7 @@ function makeAnalysis(params: {
   } = params;
 
   const intro = fallback
-    ? `${pick} is today's best available value spot. It is not a max-strength play, but it passed the fallback quality screen.`
+    ? `${pick} is one of today's best available value spots. This is a small-stake play, not a max-strength edge.`
     : `${pick} is a qualified adjusted EV ${marketLabel} play.`;
 
   return `${intro} Best price is ${formatSigned(bestOdds)} at ${bestBook}. Fair odds are ${formatSigned(
@@ -387,6 +409,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string, fal
   }
 
   const teams = Object.keys(sides);
+
   if (teams.length !== 2) return [];
 
   const [teamA, teamB] = teams;
@@ -431,11 +454,22 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string, fal
       sport: sportLabel,
     });
 
-    if (!pickIsSafeEnough({ edge, ev, odds: side.bestPrice, sport: sportLabel, marketType: 'moneyline', score, fallback })) {
+    if (
+      !pickIsSafeEnough({
+        edge,
+        ev,
+        odds: side.bestPrice,
+        sport: sportLabel,
+        marketType: 'moneyline',
+        score,
+        fallback,
+      })
+    ) {
       continue;
     }
 
-    const rating = getRating(edge, ev, score) ?? 'C';
+    const rating = getRating(edge, ev, score, fallback);
+    if (!rating) continue;
 
     picks.push({
       sport: sportLabel,
@@ -459,7 +493,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string, fal
         score,
         fallback,
       }),
-      stake: fallback ? 0.25 : stakeForRating(rating),
+      stake: stakeForRating(rating),
       result: 'pending',
       sportsbook: side.bestBook,
       sportsbook_key: side.bestBookKey,
@@ -494,6 +528,7 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string, fallba
       if (typeof outcome.point !== 'number') continue;
 
       const key = String(Math.abs(outcome.point));
+
       if (!byLine[key]) byLine[key] = [];
 
       byLine[key].push({
@@ -525,8 +560,16 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string, fallba
     const nv = noVigTwoWay(plusProb, minusProb);
 
     const pair = [
-      { side: plusBest, consensusProb: nv.a, allPrices: plusRows.map((r) => r.price) },
-      { side: minusBest, consensusProb: nv.b, allPrices: minusRows.map((r) => r.price) },
+      {
+        side: plusBest,
+        consensusProb: nv.a,
+        allPrices: plusRows.map((r) => r.price),
+      },
+      {
+        side: minusBest,
+        consensusProb: nv.b,
+        allPrices: minusRows.map((r) => r.price),
+      },
     ];
 
     for (const item of pair) {
@@ -553,11 +596,23 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string, fallba
         sport: sportLabel,
       });
 
-      if (!pickIsSafeEnough({ edge, ev, odds: item.side.price, sport: sportLabel, marketType: 'spread', score, fallback })) {
+      if (
+        !pickIsSafeEnough({
+          edge,
+          ev,
+          odds: item.side.price,
+          sport: sportLabel,
+          marketType: 'spread',
+          score,
+          fallback,
+        })
+      ) {
         continue;
       }
 
-      const rating = getRating(edge, ev, score) ?? 'C';
+      const rating = getRating(edge, ev, score, fallback);
+      if (!rating) continue;
+
       const pickName = `${item.side.team} ${formatPoint(item.side.point ?? 0)}`;
 
       picks.push({
@@ -582,7 +637,7 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string, fallba
           score,
           fallback,
         }),
-        stake: fallback ? 0.25 : stakeForRating(rating),
+        stake: stakeForRating(rating),
         result: 'pending',
         sportsbook: item.side.book,
         sportsbook_key: item.side.bookKey,
@@ -619,6 +674,7 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string, fallbac
       if (outcome.name !== 'Over' && outcome.name !== 'Under') continue;
 
       const key = String(outcome.point);
+
       if (!byTotal[key]) byTotal[key] = [];
 
       byTotal[key].push({
@@ -650,8 +706,16 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string, fallbac
     const nv = noVigTwoWay(overProb, underProb);
 
     const pair = [
-      { side: overBest, consensusProb: nv.a, allPrices: overRows.map((r) => r.price) },
-      { side: underBest, consensusProb: nv.b, allPrices: underRows.map((r) => r.price) },
+      {
+        side: overBest,
+        consensusProb: nv.a,
+        allPrices: overRows.map((r) => r.price),
+      },
+      {
+        side: underBest,
+        consensusProb: nv.b,
+        allPrices: underRows.map((r) => r.price),
+      },
     ];
 
     for (const item of pair) {
@@ -678,11 +742,23 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string, fallbac
         sport: sportLabel,
       });
 
-      if (!pickIsSafeEnough({ edge, ev, odds: item.side.price, sport: sportLabel, marketType: 'total', score, fallback })) {
+      if (
+        !pickIsSafeEnough({
+          edge,
+          ev,
+          odds: item.side.price,
+          sport: sportLabel,
+          marketType: 'total',
+          score,
+          fallback,
+        })
+      ) {
         continue;
       }
 
-      const rating = getRating(edge, ev, score) ?? 'C';
+      const rating = getRating(edge, ev, score, fallback);
+      if (!rating) continue;
+
       const pickName = `${item.side.label} ${item.side.point}`;
 
       picks.push({
@@ -707,7 +783,7 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string, fallbac
           score,
           fallback,
         }),
-        stake: fallback ? 0.25 : stakeForRating(rating),
+        stake: stakeForRating(rating),
         result: 'pending',
         sportsbook: item.side.book,
         sportsbook_key: item.side.bookKey,
@@ -734,9 +810,11 @@ function scorePick(p: Candidate) {
   if (p.play_rating === 'MAX') ratingScore = 100;
   else if (p.play_rating === 'A') ratingScore = 78;
   else if (p.play_rating === 'B') ratingScore = 56;
-  else ratingScore = 36;
+  else if (p.play_rating === 'C') ratingScore = 36;
+  else if (p.play_rating === 'BEST') ratingScore = 28;
 
   let marketScore = 0;
+
   if (p.market_type === 'spread') marketScore = 7;
   if (p.market_type === 'total') marketScore = 6;
   if (p.market_type === 'moneyline') marketScore = 5;
@@ -746,9 +824,9 @@ function scorePick(p: Candidate) {
   }
 
   const priceSafety =
-    p.odds >= -155 && p.odds <= 155
+    p.odds >= -165 && p.odds <= 165
       ? 10
-      : p.odds >= -200 && p.odds <= 200
+      : p.odds >= -210 && p.odds <= 210
         ? 4
         : -8;
 
@@ -789,6 +867,7 @@ async function fetchEventsForSport(sport: string) {
   if (!res.ok) return [];
 
   const events = await res.json();
+
   return Array.isArray(events) ? events : [];
 }
 
@@ -814,15 +893,18 @@ export async function GET() {
       fallbackCandidatesFound: 0,
       finalSelected: 0,
       fallbackUsed: false,
-      mode: 'sharp-weighted-ev-with-best-available-fallback',
+      mode: 'daily-board-weighted-ev-with-best-available',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
       fallbackMinEdge: FALLBACK_MIN_EDGE,
       fallbackMinEv: FALLBACK_MIN_EV,
       maxPicksPerRun: MAX_PICKS_PER_RUN,
+      maxFallbackPicks: MAX_FALLBACK_PICKS,
       onePickPerGame: ONE_PICK_PER_GAME,
       lookaheadHours: LOOKAHEAD_HOURS,
       minMinutesToStart: MIN_MINUTES_TO_START,
+      minBooksMl: MIN_BOOKS_ML,
+      minBooksSpreadTotal: MIN_BOOKS_SPREAD_TOTAL,
     };
 
     const eventsBySport: { sport: string; events: any[] }[] = [];
@@ -884,7 +966,11 @@ export async function GET() {
 
       debug.fallbackCandidatesFound = fallbackCandidates.length;
 
-      final = selectPicks(fallbackCandidates, 1);
+      final = selectPicks(
+        fallbackCandidates,
+        Math.min(MAX_FALLBACK_PICKS, MAX_PICKS_PER_RUN)
+      );
+
       debug.fallbackUsed = final.length > 0;
     }
 
