@@ -106,9 +106,7 @@ function clamp(num: number, min: number, max: number) {
 function noVigTwoWay(a: number, b: number) {
   const total = a + b;
 
-  if (!total) {
-    return { a: 0, b: 0 };
-  }
+  if (!total) return { a: 0, b: 0 };
 
   return {
     a: a / total,
@@ -218,7 +216,16 @@ function scorePick(p: Candidate) {
             ? 30
             : 15;
 
-  const marketScore = p.market_type === 'spread' ? 6 : p.market_type === 'total' ? 5 : 4;
+  let marketScore =
+    p.market_type === 'spread'
+      ? 6
+      : p.market_type === 'total'
+        ? 5
+        : 4;
+
+  if (p.sport === 'MLB' && p.market_type === 'spread') {
+    marketScore -= 4;
+  }
 
   const priceSafety =
     p.odds >= -140 && p.odds <= 140
@@ -309,7 +316,6 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
     if (!pickIsSafeEnough(edge, ev, side.bestPrice)) continue;
 
     const rating = getRating(edge, ev);
-
     if (!rating) continue;
 
     picks.push({
@@ -423,7 +429,6 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
       if (!pickIsSafeEnough(edge, ev, item.side.price)) continue;
 
       const rating = getRating(edge, ev);
-
       if (!rating) continue;
 
       picks.push({
@@ -541,7 +546,6 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
       if (!pickIsSafeEnough(edge, ev, item.side.price)) continue;
 
       const rating = getRating(edge, ev);
-
       if (!rating) continue;
 
       picks.push({
@@ -624,7 +628,7 @@ export async function GET() {
       totalBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'adjusted-ev-clean-price-model',
+      mode: 'adjusted-ev-clean-price-model-with-mlb-runline-penalty',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
       maxPicksPerRun: MAX_PICKS_PER_RUN,
