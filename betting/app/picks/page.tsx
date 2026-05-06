@@ -102,14 +102,17 @@ function formatGameTime(value?: string | null) {
   if (!value) return 'TBD';
 
   const date = new Date(value);
+
   if (Number.isNaN(date.getTime())) return 'TBD';
 
   return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Phoenix',
     month: 'short',
     day: 'numeric',
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    timeZoneName: 'short',
   }).format(date);
 }
 
