@@ -21,19 +21,19 @@ const ALLOWED_BOOKS = new Set([
 
 const LOOKAHEAD_HOURS = 44;
 const MIN_MINUTES_TO_START = 10;
-const MAX_PICKS_PER_RUN = 5;
+const MAX_PICKS_PER_RUN = 7;
 const ONE_PICK_PER_GAME = true;
 
 const MIN_BOOKS_ML = 3;
 const MIN_BOOKS_SPREAD_TOTAL = 2;
 
 /**
- * Sharp mode:
- * Only real plays. No weak fallback.
+ * Minimums to allow C/B/A/MAX.
+ * MAX still requires 5%+ edge inside getRating().
  */
-const MIN_EDGE = 5.0;
-const MIN_EV = 7.0;
-const MIN_SCORE = 72;
+const MIN_EDGE = 1.75;
+const MIN_EV = 2.5;
+const MIN_SCORE = 34;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -200,17 +200,6 @@ function getMarketSignals(prices: number[], bestOdds: number, bestBookKey: strin
   };
 }
 
-/**
- * This is the main fix.
- *
- * Old version:
- * trueProb = no-vig consensus + tiny adjustment
- *
- * New version:
- * trueProb = market consensus + stronger value adjustment
- *
- * It still uses books, but it no longer forces fair odds to hug market odds.
- */
 function adjustedProbability(params: {
   consensusProb: number;
   bestOdds: number;
@@ -225,62 +214,38 @@ function adjustedProbability(params: {
 
   let adjustment = 0;
 
-  /**
-   * Best-price gap is the strongest signal.
-   * If one book is giving a meaningfully better number than the market,
-   * allow the model to create real edge.
-   */
-  adjustment += clamp(signals.priceGap * 1.35, -0.015, 0.085);
+  adjustment += clamp(signals.priceGap * 1.25, -0.015, 0.075);
 
-  /**
-   * Book disagreement means the market is less settled.
-   * This is where bigger edges can exist.
-   */
-  if (signals.disagreement >= 0.010) adjustment += 0.006;
-  if (signals.disagreement >= 0.018) adjustment += 0.010;
-  if (signals.disagreement >= 0.026) adjustment += 0.012;
-  if (signals.disagreement >= 0.034) adjustment += 0.012;
+  if (signals.disagreement >= 0.010) adjustment += 0.005;
+  if (signals.disagreement >= 0.018) adjustment += 0.008;
+  if (signals.disagreement >= 0.026) adjustment += 0.010;
+  if (signals.disagreement >= 0.034) adjustment += 0.010;
 
-  /**
-   * More credit if the best price is at a sharper/mainstream book.
-   */
-  if (signals.bestBookBoost >= 1.07) adjustment += 0.008;
-  else if (signals.bestBookBoost >= 1.03) adjustment += 0.005;
+  if (signals.bestBookBoost >= 1.07) adjustment += 0.007;
+  else if (signals.bestBookBoost >= 1.03) adjustment += 0.004;
 
-  /**
-   * Market type adjustments.
-   * Spreads/totals can have softer stale numbers than ML.
-   */
-  if (marketType === 'spread') adjustment += 0.006;
-  if (marketType === 'total') adjustment += 0.005;
+  if (marketType === 'spread') adjustment += 0.005;
+  if (marketType === 'total') adjustment += 0.004;
 
-  /**
-   * MLB/NHL run-line/puck-line can produce value,
-   * so we are not killing them anymore.
-   */
   if ((sport === 'MLB' || sport === 'NHL') && marketType === 'spread') {
-    adjustment += 0.004;
+    adjustment += 0.003;
   }
 
-  /**
-   * Sweet spot: avoid huge longshot/favorite distortion,
-   * but do not over-penalize like the old code did.
-   */
-  if (bestOdds >= -175 && bestOdds <= 175) adjustment += 0.010;
-  else if (bestOdds >= -225 && bestOdds <= 225) adjustment += 0.004;
+  if (bestOdds >= -175 && bestOdds <= 175) adjustment += 0.008;
+  else if (bestOdds >= -225 && bestOdds <= 225) adjustment += 0.003;
 
-  if (bestOdds >= 280) adjustment -= 0.006;
-  if (bestOdds >= 400) adjustment -= 0.012;
-  if (bestOdds <= -300) adjustment -= 0.006;
-  if (bestOdds <= -450) adjustment -= 0.012;
+  if (bestOdds >= 300) adjustment -= 0.006;
+  if (bestOdds >= 425) adjustment -= 0.012;
+  if (bestOdds <= -325) adjustment -= 0.006;
+  if (bestOdds <= -475) adjustment -= 0.012;
 
-  /**
-   * Final blend:
-   * 78% adjusted model, 22% market consensus.
-   * This stops the model from becoming pure market consensus.
-   */
   const rawModelProb = clamp(consensusProb + adjustment, 0.03, 0.97);
-  const blended = rawModelProb * 0.78 + consensusProb * 0.22;
+
+  /**
+   * Less market compression than your old code.
+   * Lets real edges separate from consensus.
+   */
+  const blended = rawModelProb * 0.8 + consensusProb * 0.2;
 
   return clamp(blended, 0.03, 0.97);
 }
@@ -299,11 +264,11 @@ function qualityScore(params: {
 
   let score = 0;
 
-  score += edge * 13;
-  score += ev * 6;
-  score += clamp(signals.priceGap * 100, 0, 9) * 5;
-  score += clamp(signals.disagreement * 100, 0, 5) * 4;
-  score += (bookWeight(bestBookKey) - 1) * 45;
+  score += edge * 12;
+  score += ev * 5.5;
+  score += clamp(signals.priceGap * 100, 0, 9) * 4.5;
+  score += clamp(signals.disagreement * 100, 0, 5) * 3.5;
+  score += (bookWeight(bestBookKey) - 1) * 40;
 
   if (marketType === 'moneyline') score += 5;
   if (marketType === 'spread') score += 6;
@@ -313,19 +278,21 @@ function qualityScore(params: {
   else if (odds >= -225 && odds <= 225) score += 5;
   else score -= 6;
 
-  if (odds >= 300 && edge < 6) score -= 10;
-  if (odds <= -350 && edge < 6) score -= 10;
+  if (odds >= 325 && edge < 4) score -= 8;
+  if (odds <= -375 && edge < 4) score -= 8;
 
-  if ((sport === 'MLB' || sport === 'NHL') && marketType === 'spread' && edge >= 5) {
-    score += 3;
+  if ((sport === 'MLB' || sport === 'NHL') && marketType === 'spread' && edge >= 3) {
+    score += 2;
   }
 
   return score;
 }
 
 function getRating(edge: number, ev: number, score: number) {
-  if (edge >= 6.5 && ev >= 9 && score >= 88) return 'MAX';
-  if (edge >= 5 && ev >= 7 && score >= 72) return 'A';
+  if (edge >= 5 && ev >= 7 && score >= 70) return 'MAX';
+  if (edge >= 3.5 && ev >= 5 && score >= 56) return 'A';
+  if (edge >= 2.5 && ev >= 3.5 && score >= 44) return 'B';
+  if (edge >= 1.75 && ev >= 2.5 && score >= 34) return 'C';
 
   return null;
 }
@@ -333,8 +300,10 @@ function getRating(edge: number, ev: number, score: number) {
 function stakeForRating(rating: string) {
   if (rating === 'MAX') return 2;
   if (rating === 'A') return 1.25;
+  if (rating === 'B') return 0.75;
+  if (rating === 'C') return 0.5;
 
-  return 0;
+  return 0.25;
 }
 
 function pickIsSafeEnough(params: {
@@ -351,14 +320,14 @@ function pickIsSafeEnough(params: {
   if (ev < MIN_EV) return false;
   if (score < MIN_SCORE) return false;
 
-  if (odds >= 350 && edge < 7) return false;
-  if (odds <= -400 && edge < 7) return false;
+  if (odds >= 400 && edge < 4.5) return false;
+  if (odds <= -450 && edge < 4.5) return false;
 
   if (
     (sport === 'MLB' || sport === 'NHL') &&
     marketType === 'spread' &&
-    odds > 220 &&
-    edge < 6
+    odds > 260 &&
+    edge < 3.5
   ) {
     return false;
   }
@@ -393,7 +362,16 @@ function makeAnalysis(params: {
     score,
   } = params;
 
-  return `${pick} is a qualified sharp adjusted EV ${marketLabel} play. Best price is ${formatSigned(
+  const ratingText =
+    rating === 'MAX'
+      ? 'MAX edge'
+      : rating === 'A'
+        ? 'strong'
+        : rating === 'B'
+          ? 'solid'
+          : 'lean';
+
+  return `${pick} is a ${ratingText} adjusted EV ${marketLabel} play. Best price is ${formatSigned(
     bestOdds
   )} at ${bestBook}. Fair odds are ${formatSigned(fair)}. Model probability is ${(
     trueProb * 100
@@ -842,7 +820,9 @@ function scorePick(p: Candidate) {
   let ratingScore = 0;
 
   if (p.play_rating === 'MAX') ratingScore = 120;
-  else if (p.play_rating === 'A') ratingScore = 85;
+  else if (p.play_rating === 'A') ratingScore = 90;
+  else if (p.play_rating === 'B') ratingScore = 65;
+  else if (p.play_rating === 'C') ratingScore = 42;
 
   let marketScore = 0;
 
@@ -918,7 +898,7 @@ export async function GET() {
       totalBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'sharp-5-percent-edge-max-play-mode',
+      mode: 'abc-max-adjusted-ev-mode',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
       minScore: MIN_SCORE,
@@ -929,6 +909,12 @@ export async function GET() {
       minBooksMl: MIN_BOOKS_ML,
       minBooksSpreadTotal: MIN_BOOKS_SPREAD_TOTAL,
       fallbackEnabled: false,
+      ratings: {
+        max: '5% edge / 7% EV / 70 score',
+        a: '3.5% edge / 5% EV / 56 score',
+        b: '2.5% edge / 3.5% EV / 44 score',
+        c: '1.75% edge / 2.5% EV / 34 score',
+      },
     };
 
     const eventsBySport: { sport: string; events: any[] }[] = [];
@@ -981,7 +967,7 @@ export async function GET() {
         success: true,
         inserted: 0,
         message:
-          'No 5%+ edge pregame picks found. Board scanned successfully, but no MAX/A level sharp EV plays passed the filters.',
+          'No A/B/C/MAX pregame picks found. Board scanned successfully, but no plays passed the minimum edge, EV, and score checks.',
         debug,
       });
     }
