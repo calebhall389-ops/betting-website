@@ -27,13 +27,13 @@ const ONE_PICK_PER_GAME = true;
 const MIN_BOOKS_ML = 3;
 const MIN_BOOKS_SPREAD_TOTAL = 2;
 
-const MIN_EDGE = 0.95;
-const MIN_EV = 1.75;
-
-const FALLBACK_MIN_EDGE = 0.55;
-const FALLBACK_MIN_EV = 0.85;
-const ENABLE_BEST_AVAILABLE_FALLBACK = true;
-const MAX_FALLBACK_PICKS = 3;
+/**
+ * Sharp mode:
+ * Only real plays. No weak fallback.
+ */
+const MIN_EDGE = 5.0;
+const MIN_EV = 7.0;
+const MIN_SCORE = 72;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -171,12 +171,12 @@ function bookWeight(bookKey: string | null) {
 
   if (bookKey === 'draftkings') return 1.08;
   if (bookKey === 'fanduel') return 1.08;
-  if (bookKey === 'betmgm') return 1.03;
-  if (bookKey === 'caesars') return 1.02;
-  if (bookKey === 'betrivers') return 1.0;
-  if (bookKey === 'fanatics') return 0.98;
-  if (bookKey === 'espnbet') return 0.97;
-  if (bookKey === 'thescorebet') return 0.96;
+  if (bookKey === 'betmgm') return 1.04;
+  if (bookKey === 'caesars') return 1.03;
+  if (bookKey === 'betrivers') return 1.01;
+  if (bookKey === 'fanatics') return 0.99;
+  if (bookKey === 'espnbet') return 0.98;
+  if (bookKey === 'thescorebet') return 0.97;
 
   return 1;
 }
@@ -193,65 +193,96 @@ function getMarketSignals(prices: number[], bestOdds: number, bestBookKey: strin
   return {
     avgImp,
     medImp,
+    bestImp,
     disagreement,
     priceGap,
     bestBookBoost,
   };
 }
 
-function getRating(edge: number, ev: number, score: number, fallback = false) {
-  if (fallback) return 'BEST';
-
-  if (edge >= 4.5 && ev >= 7 && score >= 80) return 'MAX';
-  if (edge >= 3 && ev >= 5 && score >= 68) return 'A';
-  if (edge >= 1.75 && ev >= 3 && score >= 54) return 'B';
-  if (edge >= 0.95 && ev >= 1.75) return 'C';
-
-  return null;
-}
-
-function stakeForRating(rating: string) {
-  if (rating === 'MAX') return 2;
-  if (rating === 'A') return 1.5;
-  if (rating === 'B') return 1;
-  if (rating === 'C') return 0.5;
-  if (rating === 'BEST') return 0.25;
-
-  return 0.25;
-}
-
+/**
+ * This is the main fix.
+ *
+ * Old version:
+ * trueProb = no-vig consensus + tiny adjustment
+ *
+ * New version:
+ * trueProb = market consensus + stronger value adjustment
+ *
+ * It still uses books, but it no longer forces fair odds to hug market odds.
+ */
 function adjustedProbability(params: {
   consensusProb: number;
   bestOdds: number;
   allPrices: number[];
   bestBookKey: string | null;
   marketType: MarketType;
+  sport: string;
 }) {
-  const { consensusProb, bestOdds, allPrices, bestBookKey, marketType } = params;
+  const { consensusProb, bestOdds, allPrices, bestBookKey, marketType, sport } = params;
 
   const signals = getMarketSignals(allPrices, bestOdds, bestBookKey);
 
   let adjustment = 0;
 
-  adjustment += clamp(signals.priceGap * 0.62, -0.02, 0.04);
+  /**
+   * Best-price gap is the strongest signal.
+   * If one book is giving a meaningfully better number than the market,
+   * allow the model to create real edge.
+   */
+  adjustment += clamp(signals.priceGap * 1.35, -0.015, 0.085);
 
-  if (signals.disagreement >= 0.014) adjustment += 0.004;
-  if (signals.disagreement >= 0.024) adjustment += 0.006;
-  if (signals.disagreement >= 0.034) adjustment += 0.004;
+  /**
+   * Book disagreement means the market is less settled.
+   * This is where bigger edges can exist.
+   */
+  if (signals.disagreement >= 0.010) adjustment += 0.006;
+  if (signals.disagreement >= 0.018) adjustment += 0.010;
+  if (signals.disagreement >= 0.026) adjustment += 0.012;
+  if (signals.disagreement >= 0.034) adjustment += 0.012;
 
-  if (signals.bestBookBoost >= 1.05) adjustment += 0.004;
+  /**
+   * More credit if the best price is at a sharper/mainstream book.
+   */
+  if (signals.bestBookBoost >= 1.07) adjustment += 0.008;
+  else if (signals.bestBookBoost >= 1.03) adjustment += 0.005;
 
-  if (marketType === 'spread') adjustment += 0.004;
-  if (marketType === 'total') adjustment += 0.003;
+  /**
+   * Market type adjustments.
+   * Spreads/totals can have softer stale numbers than ML.
+   */
+  if (marketType === 'spread') adjustment += 0.006;
+  if (marketType === 'total') adjustment += 0.005;
 
-  if (bestOdds >= 220) adjustment -= 0.006;
-  if (bestOdds >= 300) adjustment -= 0.012;
-  if (bestOdds <= -240) adjustment -= 0.008;
-  if (bestOdds <= -320) adjustment -= 0.012;
+  /**
+   * MLB/NHL run-line/puck-line can produce value,
+   * so we are not killing them anymore.
+   */
+  if ((sport === 'MLB' || sport === 'NHL') && marketType === 'spread') {
+    adjustment += 0.004;
+  }
 
-  if (bestOdds >= -165 && bestOdds <= 165) adjustment += 0.006;
+  /**
+   * Sweet spot: avoid huge longshot/favorite distortion,
+   * but do not over-penalize like the old code did.
+   */
+  if (bestOdds >= -175 && bestOdds <= 175) adjustment += 0.010;
+  else if (bestOdds >= -225 && bestOdds <= 225) adjustment += 0.004;
 
-  return clamp(consensusProb + adjustment, 0.03, 0.97);
+  if (bestOdds >= 280) adjustment -= 0.006;
+  if (bestOdds >= 400) adjustment -= 0.012;
+  if (bestOdds <= -300) adjustment -= 0.006;
+  if (bestOdds <= -450) adjustment -= 0.012;
+
+  /**
+   * Final blend:
+   * 78% adjusted model, 22% market consensus.
+   * This stops the model from becoming pure market consensus.
+   */
+  const rawModelProb = clamp(consensusProb + adjustment, 0.03, 0.97);
+  const blended = rawModelProb * 0.78 + consensusProb * 0.22;
+
+  return clamp(blended, 0.03, 0.97);
 }
 
 function qualityScore(params: {
@@ -268,28 +299,42 @@ function qualityScore(params: {
 
   let score = 0;
 
-  score += edge * 12;
+  score += edge * 13;
   score += ev * 6;
-  score += clamp(signals.priceGap * 100, 0, 5) * 4;
-  score += clamp(signals.disagreement * 100, 0, 4) * 3;
-  score += (bookWeight(bestBookKey) - 1) * 40;
+  score += clamp(signals.priceGap * 100, 0, 9) * 5;
+  score += clamp(signals.disagreement * 100, 0, 5) * 4;
+  score += (bookWeight(bestBookKey) - 1) * 45;
 
-  if (marketType === 'spread') score += 5;
-  if (marketType === 'total') score += 4;
-  if (marketType === 'moneyline') score += 3;
+  if (marketType === 'moneyline') score += 5;
+  if (marketType === 'spread') score += 6;
+  if (marketType === 'total') score += 6;
 
-  if ((sport === 'MLB' || sport === 'NHL') && marketType === 'spread') {
-    score -= 6;
+  if (odds >= -175 && odds <= 175) score += 10;
+  else if (odds >= -225 && odds <= 225) score += 5;
+  else score -= 6;
+
+  if (odds >= 300 && edge < 6) score -= 10;
+  if (odds <= -350 && edge < 6) score -= 10;
+
+  if ((sport === 'MLB' || sport === 'NHL') && marketType === 'spread' && edge >= 5) {
+    score += 3;
   }
 
-  if (odds >= -165 && odds <= 165) score += 8;
-  else if (odds >= -210 && odds <= 210) score += 3;
-  else score -= 8;
-
-  if (odds >= 240 && edge < 1.5) score -= 8;
-  if (odds <= -260 && edge < 1.5) score -= 8;
-
   return score;
+}
+
+function getRating(edge: number, ev: number, score: number) {
+  if (edge >= 6.5 && ev >= 9 && score >= 88) return 'MAX';
+  if (edge >= 5 && ev >= 7 && score >= 72) return 'A';
+
+  return null;
+}
+
+function stakeForRating(rating: string) {
+  if (rating === 'MAX') return 2;
+  if (rating === 'A') return 1.25;
+
+  return 0;
 }
 
 function pickIsSafeEnough(params: {
@@ -299,28 +344,24 @@ function pickIsSafeEnough(params: {
   sport: string;
   marketType: MarketType;
   score: number;
-  fallback?: boolean;
 }) {
-  const { edge, ev, odds, sport, marketType, score, fallback } = params;
+  const { edge, ev, odds, sport, marketType, score } = params;
 
-  const minEdge = fallback ? FALLBACK_MIN_EDGE : MIN_EDGE;
-  const minEv = fallback ? FALLBACK_MIN_EV : MIN_EV;
+  if (edge < MIN_EDGE) return false;
+  if (ev < MIN_EV) return false;
+  if (score < MIN_SCORE) return false;
 
-  if (edge < minEdge || ev < minEv) return false;
-
-  if (score < (fallback ? 26 : 38)) return false;
+  if (odds >= 350 && edge < 7) return false;
+  if (odds <= -400 && edge < 7) return false;
 
   if (
     (sport === 'MLB' || sport === 'NHL') &&
     marketType === 'spread' &&
-    odds > 130 &&
-    edge < 1.5
+    odds > 220 &&
+    edge < 6
   ) {
     return false;
   }
-
-  if (odds >= 300 && edge < 1.5) return false;
-  if (odds <= -320 && edge < 1.5) return false;
 
   return true;
 }
@@ -337,7 +378,6 @@ function makeAnalysis(params: {
   ev: number;
   rating: string;
   score: number;
-  fallback?: boolean;
 }) {
   const {
     pick,
@@ -351,23 +391,20 @@ function makeAnalysis(params: {
     ev,
     rating,
     score,
-    fallback,
   } = params;
 
-  const intro = fallback
-    ? `${pick} is one of today's best available value spots. This is a small-stake play, not a max-strength edge.`
-    : `${pick} is a qualified adjusted EV ${marketLabel} play.`;
-
-  return `${intro} Best price is ${formatSigned(bestOdds)} at ${bestBook}. Fair odds are ${formatSigned(
-    fair
-  )}. Model probability is ${(trueProb * 100).toFixed(1)}%. Market implied probability is ${(
-    implied * 100
-  ).toFixed(1)}%. Edge: ${edge.toFixed(2)}%. EV: ${ev.toFixed(
+  return `${pick} is a qualified sharp adjusted EV ${marketLabel} play. Best price is ${formatSigned(
+    bestOdds
+  )} at ${bestBook}. Fair odds are ${formatSigned(fair)}. Model probability is ${(
+    trueProb * 100
+  ).toFixed(1)}%. Market implied probability is ${(implied * 100).toFixed(
+    1
+  )}%. Edge: ${edge.toFixed(2)}%. EV: ${ev.toFixed(
     2
   )}%. Quality score: ${score.toFixed(1)}. Rating: ${rating}.`;
 }
 
-function buildMoneylineCandidates(event: any, sport: string, nowIso: string, fallback = false): Candidate[] {
+function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Candidate[] {
   const sportLabel = cleanSport(sport);
 
   const sides: Record<
@@ -437,6 +474,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string, fal
       allPrices: side.prices,
       bestBookKey: side.bestBookKey,
       marketType: 'moneyline',
+      sport: sportLabel,
     });
 
     const implied = impliedProbability(side.bestPrice);
@@ -462,13 +500,12 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string, fal
         sport: sportLabel,
         marketType: 'moneyline',
         score,
-        fallback,
       })
     ) {
       continue;
     }
 
-    const rating = getRating(edge, ev, score, fallback);
+    const rating = getRating(edge, ev, score);
     if (!rating) continue;
 
     picks.push({
@@ -491,7 +528,6 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string, fal
         ev,
         rating,
         score,
-        fallback,
       }),
       stake: stakeForRating(rating),
       result: 'pending',
@@ -513,7 +549,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string, fal
   return picks;
 }
 
-function buildSpreadCandidates(event: any, sport: string, nowIso: string, fallback = false): Candidate[] {
+function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candidate[] {
   const sportLabel = cleanSport(sport);
   const byLine: Record<string, PriceRow[]> = {};
 
@@ -579,6 +615,7 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string, fallba
         allPrices: item.allPrices,
         bestBookKey: item.side.bookKey,
         marketType: 'spread',
+        sport: sportLabel,
       });
 
       const implied = impliedProbability(item.side.price);
@@ -604,13 +641,12 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string, fallba
           sport: sportLabel,
           marketType: 'spread',
           score,
-          fallback,
         })
       ) {
         continue;
       }
 
-      const rating = getRating(edge, ev, score, fallback);
+      const rating = getRating(edge, ev, score);
       if (!rating) continue;
 
       const pickName = `${item.side.team} ${formatPoint(item.side.point ?? 0)}`;
@@ -635,7 +671,6 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string, fallba
           ev,
           rating,
           score,
-          fallback,
         }),
         stake: stakeForRating(rating),
         result: 'pending',
@@ -658,7 +693,7 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string, fallba
   return picks;
 }
 
-function buildTotalCandidates(event: any, sport: string, nowIso: string, fallback = false): Candidate[] {
+function buildTotalCandidates(event: any, sport: string, nowIso: string): Candidate[] {
   const sportLabel = cleanSport(sport);
   const byTotal: Record<string, PriceRow[]> = {};
 
@@ -725,6 +760,7 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string, fallbac
         allPrices: item.allPrices,
         bestBookKey: item.side.bookKey,
         marketType: 'total',
+        sport: sportLabel,
       });
 
       const implied = impliedProbability(item.side.price);
@@ -750,13 +786,12 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string, fallbac
           sport: sportLabel,
           marketType: 'total',
           score,
-          fallback,
         })
       ) {
         continue;
       }
 
-      const rating = getRating(edge, ev, score, fallback);
+      const rating = getRating(edge, ev, score);
       if (!rating) continue;
 
       const pickName = `${item.side.label} ${item.side.point}`;
@@ -781,7 +816,6 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string, fallbac
           ev,
           rating,
           score,
-          fallback,
         }),
         stake: stakeForRating(rating),
         result: 'pending',
@@ -807,32 +841,25 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string, fallbac
 function scorePick(p: Candidate) {
   let ratingScore = 0;
 
-  if (p.play_rating === 'MAX') ratingScore = 100;
-  else if (p.play_rating === 'A') ratingScore = 78;
-  else if (p.play_rating === 'B') ratingScore = 56;
-  else if (p.play_rating === 'C') ratingScore = 36;
-  else if (p.play_rating === 'BEST') ratingScore = 28;
+  if (p.play_rating === 'MAX') ratingScore = 120;
+  else if (p.play_rating === 'A') ratingScore = 85;
 
   let marketScore = 0;
 
+  if (p.market_type === 'moneyline') marketScore = 6;
   if (p.market_type === 'spread') marketScore = 7;
-  if (p.market_type === 'total') marketScore = 6;
-  if (p.market_type === 'moneyline') marketScore = 5;
-
-  if ((p.sport === 'MLB' || p.sport === 'NHL') && p.market_type === 'spread') {
-    marketScore -= 6;
-  }
+  if (p.market_type === 'total') marketScore = 7;
 
   const priceSafety =
-    p.odds >= -165 && p.odds <= 165
-      ? 10
-      : p.odds >= -210 && p.odds <= 210
-        ? 4
-        : -8;
+    p.odds >= -175 && p.odds <= 175
+      ? 12
+      : p.odds >= -225 && p.odds <= 225
+        ? 6
+        : -6;
 
-  const bookScore = (bookWeight(p.sportsbook_key) - 1) * 30;
+  const bookScore = (bookWeight(p.sportsbook_key) - 1) * 35;
 
-  return ratingScore + marketScore + priceSafety + bookScore + p.edge * 4 + p.ev * 2;
+  return ratingScore + marketScore + priceSafety + bookScore + p.edge * 5 + p.ev * 2.5;
 }
 
 function selectPicks(candidates: Candidate[], limit: number) {
@@ -890,21 +917,18 @@ export async function GET() {
       spreadBuilt: 0,
       totalBuilt: 0,
       candidatesFound: 0,
-      fallbackCandidatesFound: 0,
       finalSelected: 0,
-      fallbackUsed: false,
-      mode: 'daily-board-weighted-ev-with-best-available',
+      mode: 'sharp-5-percent-edge-max-play-mode',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
-      fallbackMinEdge: FALLBACK_MIN_EDGE,
-      fallbackMinEv: FALLBACK_MIN_EV,
+      minScore: MIN_SCORE,
       maxPicksPerRun: MAX_PICKS_PER_RUN,
-      maxFallbackPicks: MAX_FALLBACK_PICKS,
       onePickPerGame: ONE_PICK_PER_GAME,
       lookaheadHours: LOOKAHEAD_HOURS,
       minMinutesToStart: MIN_MINUTES_TO_START,
       minBooksMl: MIN_BOOKS_ML,
       minBooksSpreadTotal: MIN_BOOKS_SPREAD_TOTAL,
+      fallbackEnabled: false,
     };
 
     const eventsBySport: { sport: string; events: any[] }[] = [];
@@ -932,9 +956,9 @@ export async function GET() {
         if (!event?.bookmakers?.length) continue;
         if (!isValidGameWindow(event.commence_time)) continue;
 
-        const ml = buildMoneylineCandidates(event, sport, nowIso, false);
-        const sp = buildSpreadCandidates(event, sport, nowIso, false);
-        const to = buildTotalCandidates(event, sport, nowIso, false);
+        const ml = buildMoneylineCandidates(event, sport, nowIso);
+        const sp = buildSpreadCandidates(event, sport, nowIso);
+        const to = buildTotalCandidates(event, sport, nowIso);
 
         debug.moneylineBuilt += ml.length;
         debug.spreadBuilt += sp.length;
@@ -946,33 +970,7 @@ export async function GET() {
 
     debug.candidatesFound = candidates.length;
 
-    let final = selectPicks(candidates, MAX_PICKS_PER_RUN);
-
-    if (!final.length && ENABLE_BEST_AVAILABLE_FALLBACK) {
-      const fallbackCandidates: Candidate[] = [];
-
-      for (const { sport, events } of eventsBySport) {
-        for (const event of events) {
-          if (!event?.id) continue;
-          if (!event?.commence_time) continue;
-          if (!event?.bookmakers?.length) continue;
-          if (!isValidGameWindow(event.commence_time)) continue;
-
-          fallbackCandidates.push(...buildMoneylineCandidates(event, sport, nowIso, true));
-          fallbackCandidates.push(...buildSpreadCandidates(event, sport, nowIso, true));
-          fallbackCandidates.push(...buildTotalCandidates(event, sport, nowIso, true));
-        }
-      }
-
-      debug.fallbackCandidatesFound = fallbackCandidates.length;
-
-      final = selectPicks(
-        fallbackCandidates,
-        Math.min(MAX_FALLBACK_PICKS, MAX_PICKS_PER_RUN)
-      );
-
-      debug.fallbackUsed = final.length > 0;
-    }
+    const final = selectPicks(candidates, MAX_PICKS_PER_RUN);
 
     debug.finalSelected = final.length;
 
@@ -983,7 +981,7 @@ export async function GET() {
         success: true,
         inserted: 0,
         message:
-          'No playable pregame picks found. Board scanned, including fallback mode, but no value spots passed minimum safety checks.',
+          'No 5%+ edge pregame picks found. Board scanned successfully, but no MAX/A level sharp EV plays passed the filters.',
         debug,
       });
     }
