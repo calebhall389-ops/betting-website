@@ -27,13 +27,12 @@ const ONE_PICK_PER_GAME = true;
 const MIN_BOOKS_ML = 3;
 const MIN_BOOKS_SPREAD_TOTAL = 2;
 
-/**
- * Minimums to allow C/B/A/MAX.
- * MAX still requires 5%+ edge inside getRating().
- */
 const MIN_EDGE = 1.75;
 const MIN_EV = 2.5;
 const MIN_SCORE = 34;
+
+const FAVORITE_ODDS_MIN = -220;
+const FAVORITE_ODDS_MAX = -105;
 
 type MarketType = 'moneyline' | 'spread' | 'total';
 
@@ -234,17 +233,16 @@ function adjustedProbability(params: {
   if (bestOdds >= -175 && bestOdds <= 175) adjustment += 0.008;
   else if (bestOdds >= -225 && bestOdds <= 225) adjustment += 0.003;
 
+  if (bestOdds >= FAVORITE_ODDS_MIN && bestOdds <= FAVORITE_ODDS_MAX) {
+    adjustment += 0.010;
+  }
+
   if (bestOdds >= 300) adjustment -= 0.006;
   if (bestOdds >= 425) adjustment -= 0.012;
   if (bestOdds <= -325) adjustment -= 0.006;
   if (bestOdds <= -475) adjustment -= 0.012;
 
   const rawModelProb = clamp(consensusProb + adjustment, 0.03, 0.97);
-
-  /**
-   * Less market compression than your old code.
-   * Lets real edges separate from consensus.
-   */
   const blended = rawModelProb * 0.8 + consensusProb * 0.2;
 
   return clamp(blended, 0.03, 0.97);
@@ -277,6 +275,10 @@ function qualityScore(params: {
   if (odds >= -175 && odds <= 175) score += 10;
   else if (odds >= -225 && odds <= 225) score += 5;
   else score -= 6;
+
+  if (odds >= FAVORITE_ODDS_MIN && odds <= FAVORITE_ODDS_MAX) {
+    score += 12;
+  }
 
   if (odds >= 325 && edge < 4) score -= 8;
   if (odds <= -375 && edge < 4) score -= 8;
@@ -470,16 +472,7 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
       sport: sportLabel,
     });
 
-    if (
-      !pickIsSafeEnough({
-        edge,
-        ev,
-        odds: side.bestPrice,
-        sport: sportLabel,
-        marketType: 'moneyline',
-        score,
-      })
-    ) {
+    if (!pickIsSafeEnough({ edge, ev, odds: side.bestPrice, sport: sportLabel, marketType: 'moneyline', score })) {
       continue;
     }
 
@@ -611,16 +604,7 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
         sport: sportLabel,
       });
 
-      if (
-        !pickIsSafeEnough({
-          edge,
-          ev,
-          odds: item.side.price,
-          sport: sportLabel,
-          marketType: 'spread',
-          score,
-        })
-      ) {
+      if (!pickIsSafeEnough({ edge, ev, odds: item.side.price, sport: sportLabel, marketType: 'spread', score })) {
         continue;
       }
 
@@ -756,16 +740,7 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
         sport: sportLabel,
       });
 
-      if (
-        !pickIsSafeEnough({
-          edge,
-          ev,
-          odds: item.side.price,
-          sport: sportLabel,
-          marketType: 'total',
-          score,
-        })
-      ) {
+      if (!pickIsSafeEnough({ edge, ev, odds: item.side.price, sport: sportLabel, marketType: 'total', score })) {
         continue;
       }
 
@@ -837,9 +812,12 @@ function scorePick(p: Candidate) {
         ? 6
         : -6;
 
+  const favoriteScore =
+    p.odds >= FAVORITE_ODDS_MIN && p.odds <= FAVORITE_ODDS_MAX ? 14 : 0;
+
   const bookScore = (bookWeight(p.sportsbook_key) - 1) * 35;
 
-  return ratingScore + marketScore + priceSafety + bookScore + p.edge * 5 + p.ev * 2.5;
+  return ratingScore + marketScore + priceSafety + favoriteScore + bookScore + p.edge * 5 + p.ev * 2.5;
 }
 
 function selectPicks(candidates: Candidate[], limit: number) {
@@ -847,9 +825,11 @@ function selectPicks(candidates: Candidate[], limit: number) {
   const selected: Candidate[] = [];
   const seenExact = new Set<string>();
   const seenGames = new Set<string>();
+  let favoriteCount = 0;
 
   for (const pick of sorted) {
     const exactKey = `${pick.event_id}-${pick.market_type}-${pick.pick}`;
+    const isFavorite = pick.odds < 0;
 
     if (seenExact.has(exactKey)) continue;
     if (ONE_PICK_PER_GAME && seenGames.has(pick.event_id)) continue;
@@ -857,8 +837,24 @@ function selectPicks(candidates: Candidate[], limit: number) {
     selected.push(pick);
     seenExact.add(exactKey);
     seenGames.add(pick.event_id);
+    if (isFavorite) favoriteCount++;
 
     if (selected.length >= limit) break;
+  }
+
+  if (favoriteCount === 0) {
+    const favorite = sorted.find((p) => {
+      const exactKey = `${p.event_id}-${p.market_type}-${p.pick}`;
+      if (p.odds >= 0) return false;
+      if (seenExact.has(exactKey)) return false;
+      if (ONE_PICK_PER_GAME && seenGames.has(p.event_id)) return false;
+      return true;
+    });
+
+    if (favorite) {
+      if (selected.length >= limit) selected.pop();
+      selected.push(favorite);
+    }
   }
 
   return selected;
@@ -898,10 +894,12 @@ export async function GET() {
       totalBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'abc-max-adjusted-ev-mode',
+      mode: 'abc-max-adjusted-ev-with-favorite-lane',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
       minScore: MIN_SCORE,
+      favoriteOddsMin: FAVORITE_ODDS_MIN,
+      favoriteOddsMax: FAVORITE_ODDS_MAX,
       maxPicksPerRun: MAX_PICKS_PER_RUN,
       onePickPerGame: ONE_PICK_PER_GAME,
       lookaheadHours: LOOKAHEAD_HOURS,
