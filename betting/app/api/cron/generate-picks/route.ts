@@ -165,6 +165,21 @@ function isValidGameWindow(commenceTime: string) {
   return hoursAway <= LOOKAHEAD_HOURS && minutesAway >= MIN_MINUTES_TO_START;
 }
 
+function getTimeDebug(commenceTime: string) {
+  const start = new Date(commenceTime).getTime();
+
+  return {
+    commence_time: commenceTime,
+    parsedValid: !Number.isNaN(start),
+    nowIso: new Date().toISOString(),
+    parsedIso: Number.isNaN(start) ? null : new Date(start).toISOString(),
+    minutesToStart: Number.isNaN(start) ? null : Math.round((start - Date.now()) / 60000),
+    hoursToStart: Number.isNaN(start)
+      ? null
+      : Number(((start - Date.now()) / 36e5).toFixed(2)),
+  };
+}
+
 function bookWeight(bookKey: string | null) {
   if (!bookKey) return 1;
 
@@ -472,7 +487,16 @@ function buildMoneylineCandidates(event: any, sport: string, nowIso: string): Ca
       sport: sportLabel,
     });
 
-    if (!pickIsSafeEnough({ edge, ev, odds: side.bestPrice, sport: sportLabel, marketType: 'moneyline', score })) {
+    if (
+      !pickIsSafeEnough({
+        edge,
+        ev,
+        odds: side.bestPrice,
+        sport: sportLabel,
+        marketType: 'moneyline',
+        score,
+      })
+    ) {
       continue;
     }
 
@@ -604,7 +628,16 @@ function buildSpreadCandidates(event: any, sport: string, nowIso: string): Candi
         sport: sportLabel,
       });
 
-      if (!pickIsSafeEnough({ edge, ev, odds: item.side.price, sport: sportLabel, marketType: 'spread', score })) {
+      if (
+        !pickIsSafeEnough({
+          edge,
+          ev,
+          odds: item.side.price,
+          sport: sportLabel,
+          marketType: 'spread',
+          score,
+        })
+      ) {
         continue;
       }
 
@@ -740,7 +773,16 @@ function buildTotalCandidates(event: any, sport: string, nowIso: string): Candid
         sport: sportLabel,
       });
 
-      if (!pickIsSafeEnough({ edge, ev, odds: item.side.price, sport: sportLabel, marketType: 'total', score })) {
+      if (
+        !pickIsSafeEnough({
+          edge,
+          ev,
+          odds: item.side.price,
+          sport: sportLabel,
+          marketType: 'total',
+          score,
+        })
+      ) {
         continue;
       }
 
@@ -861,17 +903,56 @@ function selectPicks(candidates: Candidate[], limit: number) {
 }
 
 async function fetchEventsForSport(sport: string) {
-  const url = `${ODDS_API_BASE}/${sport}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=h2h,spreads,totals&oddsFormat=american`;
+  const params = new URLSearchParams({
+    apiKey: ODDS_API_KEY,
+    regions: 'us',
+    markets: 'h2h,spreads,totals',
+    oddsFormat: 'american',
+  });
+
+  const url = `${ODDS_API_BASE}/${sport}/odds?${params.toString()}`;
 
   const res = await fetch(url, {
     cache: 'no-store',
   });
 
-  if (!res.ok) return [];
+  const text = await res.text();
 
-  const events = await res.json();
+  const requestInfo = {
+    sport,
+    status: res.status,
+    ok: res.ok,
+    requestsRemaining: res.headers.get('x-requests-remaining'),
+    requestsUsed: res.headers.get('x-requests-used'),
+    responsePreview: text.slice(0, 500),
+  };
 
-  return Array.isArray(events) ? events : [];
+  if (!res.ok) {
+    throw new Error(
+      `Odds API failed for ${sport}. Status ${res.status}. Response: ${text}`
+    );
+  }
+
+  let events: any;
+
+  try {
+    events = JSON.parse(text);
+  } catch {
+    throw new Error(
+      `Odds API returned invalid JSON for ${sport}. Response: ${text.slice(0, 1000)}`
+    );
+  }
+
+  if (!Array.isArray(events)) {
+    throw new Error(
+      `Odds API returned non-array for ${sport}. Response: ${text.slice(0, 1000)}`
+    );
+  }
+
+  return {
+    events,
+    requestInfo,
+  };
 }
 
 export async function GET() {
@@ -886,15 +967,25 @@ export async function GET() {
     const supabase = getSupabase();
     const nowIso = new Date().toISOString();
 
-    const debug = {
+    const debug: any = {
       sportsChecked: SPORTS,
+      apiFetches: [],
+      eventsFetched: 0,
+      eventsSkipped: {
+        missingId: 0,
+        missingCommenceTime: 0,
+        missingBookmakers: 0,
+        outsideGameWindow: 0,
+      },
+      sampleEvents: [],
+      timeSamples: [],
       eventsChecked: 0,
       moneylineBuilt: 0,
       spreadBuilt: 0,
       totalBuilt: 0,
       candidatesFound: 0,
       finalSelected: 0,
-      mode: 'abc-max-adjusted-ev-with-favorite-lane',
+      mode: 'abc-max-adjusted-ev-with-favorite-lane-debug-fixed',
       minEdge: MIN_EDGE,
       minEv: MIN_EV,
       minScore: MIN_SCORE,
@@ -918,14 +1009,56 @@ export async function GET() {
     const eventsBySport: { sport: string; events: any[] }[] = [];
 
     for (const sport of SPORTS) {
-      const events = await fetchEventsForSport(sport);
+      const { events, requestInfo } = await fetchEventsForSport(sport);
+
+      debug.apiFetches.push({
+        ...requestInfo,
+        eventsReturned: events.length,
+      });
+
+      debug.eventsFetched += events.length;
+
       eventsBySport.push({ sport, events });
 
       for (const event of events) {
-        if (!event?.id) continue;
-        if (!event?.commence_time) continue;
-        if (!event?.bookmakers?.length) continue;
-        if (!isValidGameWindow(event.commence_time)) continue;
+        if (debug.sampleEvents.length < 8) {
+          debug.sampleEvents.push({
+            sport,
+            id: event?.id ?? null,
+            away_team: event?.away_team ?? null,
+            home_team: event?.home_team ?? null,
+            commence_time: event?.commence_time ?? null,
+            bookmakersCount: event?.bookmakers?.length ?? 0,
+          });
+        }
+
+        if (event?.commence_time && debug.timeSamples.length < 8) {
+          debug.timeSamples.push({
+            sport,
+            game: `${event?.away_team ?? 'Unknown'} at ${event?.home_team ?? 'Unknown'}`,
+            ...getTimeDebug(event.commence_time),
+          });
+        }
+
+        if (!event?.id) {
+          debug.eventsSkipped.missingId++;
+          continue;
+        }
+
+        if (!event?.commence_time) {
+          debug.eventsSkipped.missingCommenceTime++;
+          continue;
+        }
+
+        if (!event?.bookmakers?.length) {
+          debug.eventsSkipped.missingBookmakers++;
+          continue;
+        }
+
+        if (!isValidGameWindow(event.commence_time)) {
+          debug.eventsSkipped.outsideGameWindow++;
+          continue;
+        }
 
         debug.eventsChecked++;
       }
@@ -965,7 +1098,11 @@ export async function GET() {
         success: true,
         inserted: 0,
         message:
-          'No A/B/C/MAX pregame picks found. Board scanned successfully, but no plays passed the minimum edge, EV, and score checks.',
+          debug.eventsFetched === 0
+            ? 'No events were returned from The Odds API. Check apiFetches in debug for the real reason.'
+            : debug.eventsChecked === 0
+              ? 'Events were returned, but all were skipped before candidate building. Check eventsSkipped and timeSamples in debug.'
+              : 'No A/B/C/MAX pregame picks found. Games were scanned, but no plays passed the minimum edge, EV, and score checks.',
         debug,
       });
     }
